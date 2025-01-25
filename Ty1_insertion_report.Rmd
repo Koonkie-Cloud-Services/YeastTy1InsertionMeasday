@@ -30,22 +30,24 @@ knitr::opts_chunk$set(
 ```{r load-libraries}
 library(tidyverse)
 library(gggenes)
+library(broom)
+library(cowplot)
+
 # library(reshape2)
 # library(RColorBrewer)
 # library(gridExtra)
-# library(cowplot)
 # library(splitstackshape)
 ```
 
 ```{r load-scripts}
-# source("PhaseII/scripts/butterfly_plot.R")
+# source("KOMB/scripts/butterfly_plot.R")
 ```
 
 # Ty1 insertion quantification at tRNA genes
 
 ```{r butterfly-params}
-p.data_dir <- file.path("PhaseII", "data", "whole_genome_coverages")
-p.library_size_file <- file.path("PhaseII", "data", "library_size_data.xlsx")
+p.data_dir <- file.path("KOMB", "data", "whole_genome_coverages")
+p.library_size_file <- file.path("KOMB", "data", "library_size_data.xlsx")
 p.read_norm_type <- "raw"
 p.input_coverage_file_names <- c(
   "upstream-negative"="all_libraries_coverage_upstream_negative_trnas_headered.tsv",
@@ -53,7 +55,7 @@ p.input_coverage_file_names <- c(
   "downstream-positive"="all_libraries_coverage_downstream_positive_trnas_headered.tsv",
   "downstream-negative"="all_libraries_coverage_downstream_negative_trnas_headered.tsv"
 )
-p.trna_bed_path <- file.path("PhaseII", "data", "feature_locations", "trna_regions.edited.bed")
+p.trna_bed_path <- file.path("KOMB", "data", "feature_locations", "trna_regions.edited.bed")
 ```
 
 ```{r load-library-depth-data}
@@ -176,7 +178,7 @@ load_coverage_data_frame <- function(file_path, index) {
 #   .add_trna_names() %>%
 #   .pivot_coverage_longer_and_aggregate()
 
-df.a <- purrr::imap(
+cov_df <- purrr::imap(
   .x = setNames(
     file.path(p.data_dir, p.input_coverage_file_names),
     names(p.input_coverage_file_names)),
@@ -196,7 +198,7 @@ df.a <- purrr::imap(
     return()
 }
 
-df.b <- df.a %>%
+cov_df <- cov_df %>%
   dplyr::mutate(
     subunit = case_when(
       grepl("34", library) ~ "RPC34",
@@ -206,7 +208,7 @@ df.b <- df.a %>%
     ) %>%
   .normalise_sequencing_library_coverage()
 
-libs_missing <- filter(df.b, is.na(coverage.norm)) %>% 
+libs_missing <- filter(cov_df, is.na(coverage.norm)) %>% 
   distinct(library) %>% 
   pull(library)
 
@@ -220,7 +222,7 @@ if (length(libs_missing) >= 1) {
 ```
 
 ```{r extract-metadata-from-library-names}
-df.c <- df.b %>%
+cov_df <- cov_df %>%
   mutate(
     sugar = case_when(
       grepl(x=library, pattern = "_Dex$", perl = TRUE, ignore.case = TRUE) ~ "Dextrose",
@@ -369,7 +371,7 @@ nucleosome_position_df <- data.frame(
 p.span <- 0.08  # Controls the amount of smoothing for the default loess smoother
 # (0.75 by default). Values between 0.08 and 0.05 retain the double-peak.
 p.level <- 0.99  # Level of confidence interval to use (0.95 by default).
-df.b %>%
+cov_df %>%
   dplyr::group_by(subunit, library, proximity, strand, rel.position) %>%
   summarise(
     coverage.norm = sum(coverage.norm),
@@ -391,7 +393,7 @@ Next, we wanted to learn whether there was a difference in Ty1 insertion between
 
 ```{r strand-difference-box-and-whisker, fig.cap="Comparison of normalised read depths between the positive and negative strands.", fig.height=3, fig.width=4}
 
-df.b %>%
+cov_df %>%
   group_by(library, trna.name, proximity, strand) %>%
   mutate(strand = ifelse(strand == '+',
                          "positive",
@@ -411,10 +413,9 @@ There is no difference between the two strands.
 
 The Ty1 retrotransposon is thought to use the RNA polymerase machinery to insert into the genome, upstream of the genes transcribed by the respective RNA polymerase enzyme -- in this case, RNA polymerase III. The RNA polymerase III subunits  [RPC160](https://www.yeastgenome.org/locus/RPC160), [RPC53](https://www.yeastgenome.org/locus/S000002309) and [RPC34](https://www.yeastgenome.org/locus/RPC34) are all necessary for transcription. To test which subunits associate with Ty1 retrotransposon's insertion machinery, each of the three subunit-encoding genes were systematically mutated and its consequent impact on insertion was analysed. A baseline of no insertion was inferred from *S. cerevisae* grown on dextrose.
 
-__TODO: Should these values instead be calculated for each tRNA gene, rather than each chromosome?__
 
-```{r mutant-vs-wildtype-insertion-box-plot, fig.cap="Comparison of normalised coverage between the mutant and wild-type strains for each subunit group. For this box-plot, coverage values for only the upstream regions were used as insertion in the downstream was always less. Coverage across all tRNA genes on both strands was was summed, yielding 16 data points for each library: one for each chromosome."}
-df.c %>% 
+```{r mutant-vs-wildtype-insertion-box-plot, fig.cap="Comparison of normalised coverage between the mutant and wild-type strains for each subunit group. For this box-plot, coverage values for only the upstream regions were used as insertion in the downstream was always less. Coverage across all tRNA genes on both strands was was summed, yielding 16 data points for each library: one for each chromosome.", fig.height=5}
+cov_df %>% 
   filter(proximity == "upstream") %>% 
   group_by(strain.type, sugar, subunit, trna.name, group, chr) %>% 
   reframe(coverage.sum = sum(coverage.norm)) %>% 
@@ -436,7 +437,96 @@ df.c %>%
 
 ```
 
-```{r mutant-vs-wildtype-t-test}
+```{r mutant-vs-wt-distribution, fig.cap="Distributions of mutant and wild-type coverage around tRNA genes. Dashed vertical lines indicate the mean coverage values for each group. Coverage was summed for each tRNA gene and library (__a__), and RNA polymerase II subunit (__b__).", fig.height=5, fig.width=13}
+dist_plot.a <- cov_df %>% 
+  group_by(strain.type, trna.name, library) %>% 
+  summarise(coverage.sum = sum(coverage.norm),
+            .groups = "keep") %>% 
+  ggplot(aes(x = coverage.sum,
+             fill = strain.type)) +
+  geom_density(alpha = 0.5) +
+  ggplot2::labs(x = "Normalized 5'-most nucleotide coverage",
+                y = "") +
+  ggplot2::guides(fill = "none") +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+dist_plot.b <- cov_df %>% 
+  group_by(strain.type, trna.name, library, subunit) %>% 
+  summarise(coverage.sum = sum(coverage.norm),
+            .groups = "keep") %>% 
+  ggplot(aes(x = log(coverage.sum),
+             fill = strain.type,
+             colour = strain.type)) +
+  geom_density(alpha = 0.5) +
+  ggplot2::facet_grid(~subunit) +
+  ggplot2::labs(x = "Log-normalized 5'-most nucleotide coverage",
+                y = "") +
+  stat_summary(aes(xintercept = after_stat(x),
+                   y = 0),
+               fun = mean, 
+               geom = "vline", 
+               orientation = "y",
+               linetype = "dashed") +
+  ggplot2::guides(fill = guide_legend(title = ""),
+                  colour = "none") +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  )
+
+cowplot::plot_grid(dist_plot.a, dist_plot.b,
+                   align = "hv",
+                   labels = "auto",
+                   axis = "tb",
+                   rel_heights = c(1,1),
+                   rel_widths = c(1, 3))
+```
+
+```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference between the tRNA coverages of mutant and wild-type strains."}
+
+t_test <- function(df, ...) {
+  t.test(
+    x = df %>% 
+         dplyr::filter(strain.type == "Wild-type") %>% 
+         dplyr::pull(coverage.sum), 
+    y = df %>% 
+         dplyr::filter(strain.type == "Mutant") %>% 
+         dplyr::pull(coverage.sum),
+    ...
+  ) %>% 
+    broom::tidy() %>% 
+    dplyr::rename(
+      "wt.mean"="estimate1",
+      "mut.mean"="estimate2"
+    ) %>% 
+    return()
+}
+
+cov_df %>% 
+  group_by(strain.type, trna.name, library, subunit) %>% 
+  summarise(coverage.sum = sum(coverage.norm),
+            .groups = "keep") %>%
+  dplyr::group_by(subunit) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(
+    ttest = purrr::map(data,
+                       t_test,
+                       paired = FALSE,
+                       conf.level = 0.99,
+                       alternative = "two.sided")
+  ) %>%
+  tidyr::unnest(ttest) %>% 
+  dplyr::select(all_of(c("subunit", "statistic", "p.value", "wt.mean", "mut.mean"))) %>% 
+  knitr::kable(
+    digits = Inf,
+    col.names = c("Subunit", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+  ) %>% 
+  kableExtra::kable_minimal()
 
 ```
 
@@ -445,6 +535,7 @@ df.c %>%
 ## Heatmap
 
 ```{r}
+
 
 ```
 
