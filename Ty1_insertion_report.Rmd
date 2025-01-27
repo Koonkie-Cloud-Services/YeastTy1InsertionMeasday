@@ -46,16 +46,17 @@ library(cowplot)
 # Ty1 insertion quantification at tRNA genes
 
 ```{r butterfly-params}
-p.data_dir <- file.path("KOMB", "data", "whole_genome_coverages")
-p.library_size_file <- file.path("KOMB", "data", "library_size_data.xlsx")
+p.data_dir <- file.path("KOMB", "data")
+p.trna_cov_dir <- file.path(p.data_dir, "whole_genome_coverages")
+p.library_size_file <- file.path(p.data_dir, "library_size_data.xlsx")
 p.read_norm_type <- "raw"
-p.input_coverage_file_names <- c(
+p.input_trna_coverage_file_names <- c(
   "upstream-negative"="all_libraries_coverage_upstream_negative_trnas_headered.tsv",
   "upstream-positive"="all_libraries_coverage_upstream_positive_trnas_headered.tsv",
   "downstream-positive"="all_libraries_coverage_downstream_positive_trnas_headered.tsv",
   "downstream-negative"="all_libraries_coverage_downstream_negative_trnas_headered.tsv"
 )
-p.trna_bed_path <- file.path("KOMB", "data", "feature_locations", "trna_regions.edited.bed")
+p.trna_bed_path <- file.path(p.data_dir, "feature_locations", "trna_regions.edited.bed")
 ```
 
 ```{r load-library-depth-data}
@@ -173,15 +174,15 @@ load_coverage_data_frame <- function(file_path, index) {
 
 ```{r load-coverage-data}
 # TEST:
-# tmp <- .load_coverage_matrix(file.path(p.data_dir, p.input_coverage_file_names)[4]) %>%
-#   .separate_strand_and_proximity(index = names(p.input_coverage_file_names)[4]) %>%
+# tmp <- .load_coverage_matrix(file.path(p.data_dir, p.input_trna_coverage_file_names)[4]) %>%
+#   .separate_strand_and_proximity(index = names(p.input_trna_coverage_file_names)[4]) %>%
 #   .add_trna_names() %>%
 #   .pivot_coverage_longer_and_aggregate()
 
 cov_df <- purrr::imap(
   .x = setNames(
-    file.path(p.data_dir, p.input_coverage_file_names),
-    names(p.input_coverage_file_names)),
+    file.path(p.trna_cov_dir, p.input_trna_coverage_file_names),
+    names(p.input_trna_coverage_file_names)),
   .f = load_coverage_data_frame) %>% 
   dplyr::bind_rows()
 ```
