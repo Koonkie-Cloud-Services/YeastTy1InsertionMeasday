@@ -352,12 +352,12 @@ hm.cov_df <- purrr::imap(
     names(p.hm.input_coverage_file_names)
   ),
   .f = load_genome_coverage_data_frame) %>%
-  dplyr::bind_rows() %>% 
+  dplyr::bind_rows() %>%
   .fix_gene_names() %>%
-  .fix_library_names() %>% 
-  .subtract_antifeature_from_feature_freqs() %>% 
+  calculate_tpm(read_counts %>% 
+                  dplyr::filter(norm_type == p.read_norm_type)) %>% 
   dplyr::group_by(library, feature.name) %>% 
-  dplyr::reframe(mean_cov = mean(mean_cov)) %>% 
+  dplyr::reframe(mean_cov = mean(coverage)) %>% 
   dplyr::ungroup() %>% 
   dplyr::arrange(library, feature.name)
 
@@ -374,7 +374,7 @@ hm.meta_df <- hm.cov_df %>%
 ```
 
 
-```{r plot-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library."}
+```{r plot-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
 plot_genome_coverage_heatmap(
   cov_mat = hm.cov_mat,
   meta_df = hm.meta_df,

@@ -40,10 +40,32 @@ load_genome_coverage_data_frame <- function(file_path, index) {
                                     "+",
                                     "-"))
   }
-  df %>% 
-    dplyr::mutate(mean_cov = (coverage - 1) / feature.length) %>% 
+  df %>%
     dplyr::select(!tidyselect::matches("V[[:digit:]]")) %>% 
     return()
+}
+
+calculate_tpm <- function(cov_df, lib_size_df) {
+  cov_df %>% 
+    .fix_library_names() %>% 
+    dplyr::left_join(lib_size_df %>% 
+                       .fix_library_names(),
+                     by = "library") %>%
+    dplyr::ungroup() %>% 
+    dplyr::mutate(
+      coverage = coverage - 1,
+      rpk = coverage / (feature.length / 1E3)) %>% 
+    dplyr::group_by(library) %>% 
+    dplyr::mutate(scaler = sum(rpk) / 1E6) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::mutate(
+      tpm = rpk / scaler,
+      coverage = coverage / feature.length / ( seq_library_size / 1E6)
+    ) %>%
+    dplyr::select(!tidyselect::all_of(
+      c("rpk", "scaler", "norm_type", "seq_library_size")
+    )) %>% 
+  return()
 }
 
 .fix_gene_names <- function(df) {
@@ -61,19 +83,20 @@ load_genome_coverage_data_frame <- function(file_path, index) {
       feature.name = gsub("MRibosomal",
                           "Ribosomal",
                           feature.name),
-      feature.name = gsub("Ribosomal_Protein",
-                          "RPL",
-                          feature.name)
+      feature.name = gsub("_", " ", feature.name),
+      feature.name = case_when(
+        feature.name == "Ribosomal Protein" ~ "RPL",
+        feature.name == "intergenic" ~ "anti-feature",
+        feature.name == "rep origin" ~ "origin of replication",
+        .default = feature.name
+      )
     ) %>%
     return()
 }
 
 .fix_library_names <- function(df) {
   df %>% dplyr::mutate(
-    library = gsub("&",
-                   "_",
-                   library),
-    library = gsub("-",
+    library = gsub("&|\\.|-",
                    "_",
                    library)
   ) %>% 
@@ -146,15 +169,20 @@ plot_genome_coverage_heatmap <- function(cov_mat,
                                          column_labels = "group",
                                          annotations = NULL,
                                          brewer_palette_name = c("Dark2", "Set3")) {
+  n_sig_digits <- 4
   hm_legend <- list(
     title = "Mean\ncoverage",
     at = round(c(
       min(cov_mat),
       mean(cov_mat),
       max(cov_mat)),
-      3)
+      n_sig_digits)
   )
   
+  if (round(max(cov_mat), n_sig_digits) == 0) {
+    stop("Heatmap legend significant digits results in 0")
+  }
+
   if (!is.null(annotations)) {
     annot_palette <- meta_df %>% 
       dplyr::select(tidyselect::all_of(annotations)) %>% 
@@ -176,6 +204,7 @@ plot_genome_coverage_heatmap <- function(cov_mat,
     cluster_columns = TRUE,
     cluster_rows = TRUE,
     border = FALSE,
+    col = viridis::viridis(100),
     column_labels = meta_df[[column_labels]],
     heatmap_legend_param = hm_legend,
     clustering_distance_columns = "canberra",
