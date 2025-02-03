@@ -341,11 +341,29 @@ bt.cov_df %>%
 
 ```
 
-# Ty1 insertion site analysis
+# Genome-wide Ty1 insertion site analysis
+
+As part of the Ty1 insertion site experiments, genes in the knock-out mutants were rescued by copies on a plasmid. Since these were not located on the chromosome, however, we wanted to remove their contributions to coverage values. These regions are defined in the following table.
+
+```{r define-blackout-regions, tab.cap="Regions removed from the coverage tables."}
+
+blackout_df <- data.frame(
+  name = c("LEU2"),
+  chr = c("chr3"),
+  start = c(90907),
+  end = c(92894)
+)
+
+blackout_df %>% 
+  knitr::kable() %>% 
+  kableExtra::kable_minimal()
+
+```
 
 ## Heatmap
 
 ```{r load-heatmap-coverage-data}
+
 hm.cov_df <- purrr::imap(
   .x = setNames(
     file.path(p.hm.cov_dir, p.hm.input_coverage_file_names),
@@ -354,18 +372,18 @@ hm.cov_df <- purrr::imap(
   .f = load_genome_coverage_data_frame) %>%
   dplyr::bind_rows() %>%
   .fix_gene_names() %>%
+  filter_blackout_regions(coord_df = blackout_df) %>%
   calculate_tpm(read_counts %>% 
                   dplyr::filter(norm_type == p.read_norm_type)) %>% 
   dplyr::group_by(library, feature.name) %>% 
-  dplyr::reframe(mean_cov = mean(coverage)) %>% 
+  dplyr::reframe(
+    mean_cov = mean(coverage.pbp),
+    mean_cov.norm = mean(coverage.pbp.norm),
+    sd_cov.norm = sd(coverage.pbp.norm),
+    mean_tpm = mean(tpm)
+  ) %>% 
   dplyr::ungroup() %>% 
   dplyr::arrange(library, feature.name)
-
-hm.cov_mat <- hm.cov_df %>% 
-  tidyr::pivot_wider(names_from = "feature.name",
-                     values_from = "mean_cov") %>% 
-  tibble::column_to_rownames("library") %>%
-  t()
 
 hm.meta_df <- hm.cov_df %>% 
   extract_metadata_from_library_names() %>% 
@@ -374,18 +392,63 @@ hm.meta_df <- hm.cov_df %>%
 ```
 
 
-```{r plot-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
-plot_genome_coverage_heatmap(
-  cov_mat = hm.cov_mat,
-  meta_df = hm.meta_df,
-  annotations = c("strain.type", "sugar", "subunit"),
-  brewer_palette_name = c("Set1", "Set3", "Accent")
-)
+```{r plot-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
+
+for (panel in unique(hm.meta_df$subunit)) {
+  draw(plot_genome_coverage_heatmap(
+    cov_mat = hm.cov_df %>%
+      extract_metadata_from_library_names() %>% 
+      dplyr::filter(subunit == panel) %>% 
+      dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_cov.norm"))) %>% 
+      tidyr::pivot_wider(names_from = "feature.name",
+                         values_from = "vals") %>% 
+      tibble::column_to_rownames("library") %>%
+      t(),
+    meta_df = hm.meta_df %>% 
+      dplyr::filter(subunit == panel) %>%
+      dplyr::mutate(group = ifelse(subunit == "Other",
+                                   group,
+                                   paste(subunit, group, sep = '-'))),
+    annotations = c("strain.type", "sugar"),
+    brewer_palette_name = c("Set1", "Set3")
+  ))
+}
+```
+
+```{r low-coverage-features, fig.cap="Bar-plot with error bars representing the mean coverage (in reads per base-pair) of each feature across. Libraries grown on destrose were excluded from this figure so as to not bias the summary functions."}
+low_cov_features <- hm.cov_df %>%
+  dplyr::group_by(feature.name) %>% 
+  dplyr::reframe(median_cov = median(mean_cov.norm)) %>% 
+  dplyr::arrange(median_cov) %>% 
+  dplyr::filter(median_cov < 1E-3) %>% 
+  dplyr::pull(feature.name)  
+
+hm.cov_df %>%
+  extract_metadata_from_library_names() %>% 
+  dplyr::filter(
+    feature.name %in% low_cov_features,
+    sugar == "Galactose"
+  ) %>% 
+  dplyr::mutate(feature.name = reorder(feature.name, mean_cov.norm)) %>% 
+  ggplot(aes(x = feature.name, y = mean_cov.norm)) +
+  geom_bar(stat = "summary") +
+  geom_errorbar(stat = "summary",
+                width = 0.5) +
+  ggplot2::facet_grid(rows = vars(subunit),
+                      cols = vars(strain.type)) +
+  labs(x = "Genome feature",
+       y = "Mean coverage (reads/bp)") +
+  theme_bw() +
+  ggplot2::theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
 ```
 
 # Appendix
 
-## RPC160 butterfly plots
+## Ty1 insertion quantification at tRNA genes
+
+### RPC160 butterfly plots
 
 These are to show side-by-side comparisons of RPC160 mutants to wild-type 
 
@@ -433,3 +496,38 @@ bt.cov_df %>%
   plot_mutant_and_wildtype_butterfly_helper()
 
 ```
+
+## Genome-wide Ty1 insertion site analysis
+
+### TPM heatmap
+
+
+```{r plot-tpm-heatmap, fig.cap = "Heatmap of genome feature mean TPM values for each library."}
+plot_genome_coverage_heatmap(
+  cov_mat = hm.cov_df %>%
+    dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_tpm"))) %>% 
+    tidyr::pivot_wider(names_from = "feature.name",
+                       values_from = "vals") %>% 
+    tibble::column_to_rownames("library") %>%
+    t(),
+  meta_df = hm.meta_df,
+  annotations = c("strain.type", "sugar", "subunit"),
+  brewer_palette_name = c("Set1", "Set3", "Accent"),
+  legend_title = "Mean\nTPM"
+)
+```
+
+
+### Mean TPM and coverage relationship
+
+The following figure is to determine how the choice between TPM and coverage influences the results and potentially the interpretation.
+
+```{r cov-tpm-scatter-plot, fig.cap="Mean coverage and TPM values are linearly correlated, and the slope of the relationship is explained by the library.", fig.height=4, fig.width=10}
+hm.cov_df %>% 
+  ggplot(aes(x = mean_cov, y = mean_tpm, colour = library)) +
+  geom_point() +
+  theme_bw()
+```
+
+The figure above shows that there is less differentiation between the different libraries when using TPM values (y-axis) compared to using coverage values (x-axis). Whether this reflects true signal or a lack of normalization in calculating coverage values is not clear.
+
