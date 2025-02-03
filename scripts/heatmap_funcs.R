@@ -60,10 +60,11 @@ calculate_tpm <- function(cov_df, lib_size_df) {
     dplyr::ungroup() %>% 
     dplyr::mutate(
       tpm = rpk / scaler,
-      coverage = coverage / feature.length / ( seq_library_size / 1E6)
+      coverage.pbp = coverage / feature.length,
+      coverage.pbp.norm = coverage.pbp / ( seq_library_size / 1E6)
     ) %>%
     dplyr::select(!tidyselect::all_of(
-      c("rpk", "scaler", "norm_type", "seq_library_size")
+      c("rpk", "scaler", "norm_type", "seq_library_size", "coverage")
     )) %>% 
   return()
 }
@@ -109,6 +110,15 @@ calculate_tpm <- function(cov_df, lib_size_df) {
   # all_coverage_info_agg_dcast_df[1,] = 0
   df %>% 
     return()
+}
+
+filter_blackout_regions <- function(df, coord_df) {
+  for (i in nrow(coord_df)) {
+    r <- coord_df[i,]
+    df <- df %>% 
+      filter(chr != r$chr | end < r$start | start > r$end)
+  }
+  return(df)
 }
 
 colour_metadata <- function(df,
@@ -168,10 +178,11 @@ plot_genome_coverage_heatmap <- function(cov_mat,
                                          meta_df,
                                          column_labels = "group",
                                          annotations = NULL,
-                                         brewer_palette_name = c("Dark2", "Set3")) {
+                                         brewer_palette_name = c("Dark2", "Set3"),
+                                         legend_title = "Mean\ncoverage") {
   n_sig_digits <- 4
   hm_legend <- list(
-    title = "Mean\ncoverage",
+    title = legend_title,
     at = round(c(
       min(cov_mat),
       mean(cov_mat),
@@ -194,7 +205,7 @@ plot_genome_coverage_heatmap <- function(cov_mat,
   
   col_ha <- ComplexHeatmap::columnAnnotation(
     df = meta_df %>% 
-      dplyr::select(!all_of(column_labels)),
+      dplyr::select(tidyselect::all_of(annotations)),
     col = annot_palette
   )
   
