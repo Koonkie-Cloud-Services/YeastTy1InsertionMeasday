@@ -1,11 +1,10 @@
 #!/bin/bash
 
-sample_name_map=$1
-output_file_name=$2
+output_file_path=$1
 
-if [ "$#" -ne 2 ]; then
+if [ "$#" -ne 1 ]; then
     echo "ERROR: unexpected number of arguments provided"
-    echo -e "USAGE:\n$0 <sample_name_map> <output_file_name>"
+    echo -e "USAGE:\n$0 <output_file_name>"
     exit
 fi
 
@@ -14,7 +13,9 @@ working_dir="data"
 bam_suffix="dupremoved.sorted"
 bam_dir="$working_dir/BAM_alignments_to_yeast_reference"
 bed_dir="$working_dir/BEDs/"
+sample_name_map="$working_dir/hiseq_sample_id_map.tsv"
 features_file="$working_dir/feature_locations/all_features.bed"
+chr_lengths_file="$working_dir/feature_locations/chromosome_lengths.tsv"
 
 
 if [ ! -d $working_dir ]; then
@@ -22,38 +23,44 @@ if [ ! -d $working_dir ]; then
 	exit
 fi
 
-echo "Rename BAM files"
-while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName
+if [ -f $output_file_path ]; then
+	echo "ERROR: remove output file '$output_file_path' to prevent overwriting"
+	exit
+fi
+
+mkdir -p $bed_dir
+touch $output_file_path
+
+while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName || [ -n "$fastqName" ]
 do
 	# Skip the header line
 	if [[ $sampleId == "sampleId" ]]; then
 		continue
 	fi
 
+	# Define file paths for sample
 	old_bam="${bam_dir}/${prefix}_${bam_suffix}.bam"
-	new_bam="${bam_dir}/${uniqueId}_${bam_suffix}.bam"
+	new_bam_path="${bam_dir}/${uniqueId}_${bam_suffix}.bam"
+	bed_path="${bed_dir}/${uniqueId}_${bam_suffix}_feature_coverage.bed"
+
 	if [ ! -f $old_bam ]; then
 		echo "ERROR: Unable to find input BAM file '$old_bam'"
 		exit
 	fi
 
-	cp $old_bam $new_bam
-done<$sample_name_map
+	echo "[INFO] Renaming $uniqueId BAM: '$old_bam'"
+	cp $old_bam $new_bam_path
 
-echo "Create BED files"
-mkdir -p $bed_dir
-while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName
-do
-        # Skip the header line
-        if [[ $sampleId == "sampleId" ]]; then
-                continue
-        fi
-
-	echo $uniqueId
-	bam_file="${bam_dir}/${uniqueId}_${bam_suffix}.bam"
+	echo "[INFO] calculating feature coverage for sample: $uniqueId"
 	bedtools coverage \
 		-a $features_file \
-		-b $bam_file \
-		-bed -sorted -counts > \
-		"${bed_dir}/${uniqueId}_${bam_suffix}_feature_coverage.bed"
+		-b $new_bam_path \
+		-g $chr_lengths_file \
+		-bed -sorted -counts \
+		> $bed_path
+
+	# Write to the output file path
+	cat $bed_path | \
+		awk -v id="$uniqueId" '{ OFS="\t"; print id,$0 }' >> \
+		$output_file_path
 done<$sample_name_map
