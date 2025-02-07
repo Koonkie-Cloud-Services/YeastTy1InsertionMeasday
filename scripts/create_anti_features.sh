@@ -6,5 +6,25 @@ if [ "$#" -ne 3 ]; then
     exit
 fi
 
+output_bed=$3
 
-bedtools complement -i $1 -g $2 > $3
+if [ -f $output_bed ]; then
+	rm $output_bed
+fi
+
+cat $1 | \
+	grep '\+$' | \
+	bedtools complement -i - -g $2 | \
+	awk -v id="anti-feature" -v strand="+" '{ OFS="\t"; print $0,id,strand }' \
+	>> "$output_bed.tmp"
+
+cat $1 | \
+	grep '\-$' | \
+	bedtools complement -i - -g $2 | \
+	awk -v id="anti-feature" -v strand="-" '{ OFS="\t"; print $0,id,strand }' \
+	>> "$output_bed.tmp"
+
+bedtools sort -g $2 -i "$output_bed.tmp" >$output_bed
+rm "$output_bed.tmp"
+
+echo "[INFO] Finished creating anti-features file"
