@@ -33,6 +33,8 @@ p_o_features_file="$p_o_features_dir/all_features.bed"
 p_o_pos_features_file="$p_o_features_dir/all_positive_features.bed"
 p_o_neg_features_file="$p_o_features_dir/all_negative_features.bed"
 p_o_anti_features_file="$p_o_features_dir/all_anti-features.bed"
+p_o_pos_anti_features_file="$p_o_features_dir/all_positive_anti-features.bed"
+p_o_neg_anti_features_file="$p_o_features_dir/all_negative_anti-features.bed"
 p_o_trna_locations_file="$p_o_features_dir/trna_regions.bed"
 p_o_coverage_file="$p_output_dir/genome_coverage_counts_${p_bam_suffix}.bed"
 
@@ -68,14 +70,21 @@ python scripts/arabic_to_roman.py $p_i_features_file $p_o_features_file
 python scripts/arabic_to_roman.py $p_i_trna_locations_file $p_o_trna_locations_file
 
 
-echo "[INFO] creating anti-features file"
-scripts/create_anti_features.sh $p_o_features_file $p_i_chr_lengths_file $p_o_anti_features_file
-
 echo "[INFO] creating strand-wise feature files"
 cat $p_o_features_file |
 	grep '\+$' > $p_o_pos_features_file
 cat $p_o_features_file |
 	grep '\-$' > $p_o_neg_features_file
+
+echo "[INFO] creating anti-features file '$p_o_anti_features_file'"
+scripts/create_anti_features.sh $p_o_features_file $p_i_chr_lengths_file $p_o_anti_features_file
+
+echo "[INFO] creating strand-wise anti-feature files"
+cat $p_o_anti_features_file |
+	grep '\+$' > $p_o_pos_anti_features_file
+cat $p_o_anti_features_file |
+	grep '\-$' > $p_o_neg_anti_features_file
+
 
 while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName || [ -n "$fastqName" ]
 do
@@ -112,6 +121,7 @@ do
 		-g $p_i_chr_lengths_file \
 		-sorted -counts \
 		>> $bed_path
+
 	# negative-features
 	bedtools bamtobed -i $new_bam_path | \
 		grep '\-$'  | \
@@ -122,13 +132,25 @@ do
 		-sorted -counts \
 		>> $bed_path
 
-	# antifeatures
-	bedtools coverage \
-                -a $p_o_anti_features_file \
-                -b $new_bam_path \
-                -g $p_i_chr_lengths_file \
-                -bed -sorted -counts \
-                >> $bed_path
+	# positive-antifeatures
+	bedtools bamtobed -i $new_bam_path | \
+		grep '\+$'  | \
+		bedtools coverage \
+		-a $p_o_pos_anti_features_file \
+		-b - \
+		-g $p_i_chr_lengths_file \
+		-sorted -counts \
+		>> $bed_path
+
+	# negative-antifeatures
+	bedtools bamtobed -i $new_bam_path | \
+		grep '\-$'  | \
+		bedtools coverage \
+		-a $p_o_neg_anti_features_file \
+		-b - \
+		-g $p_i_chr_lengths_file \
+		-sorted -counts \
+		>> $bed_path
 
 	# Write to the output file path
 	cat $bed_path | \
