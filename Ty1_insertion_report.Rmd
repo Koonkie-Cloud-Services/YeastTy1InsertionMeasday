@@ -50,27 +50,29 @@ source("KOMB/scripts/butterfly_funcs.R")
 ```{r load-parameters}
 # GLOBAL
 p.data_dir <- file.path("KOMB", "data")
-p.library_size_file <- file.path(p.data_dir, "library_size_data.xlsx")
+p.library_size_file <- file.path(p.data_dir, "input", "library_size_data.xlsx")
 p.read_norm_type <- "raw"
 
 # BUTTERFLY
-p.bt.trna_cov_dir <- file.path(p.data_dir, "whole_genome_coverages")
+p.bt.trna_cov_dir <- file.path(p.data_dir, "input", "trna_coverages")
 p.bt.input_trna_coverage_file_names <- c(
   "upstream-negative"="all_libraries_coverage_upstream_negative_trnas_headered.tsv",
   "upstream-positive"="all_libraries_coverage_upstream_positive_trnas_headered.tsv",
   "downstream-positive"="all_libraries_coverage_downstream_positive_trnas_headered.tsv",
   "downstream-negative"="all_libraries_coverage_downstream_negative_trnas_headered.tsv"
 )
-p.bt.trna_bed_path <- file.path(p.data_dir, "feature_locations", "trna_regions.edited.bed")
+p.bt.trna_bed_path <- file.path(p.data_dir, "output", "feature_locations", "trna_regions.bed")
 
 # HEATMAP
-p.hm.cov_dir <- file.path(p.data_dir, "feature_heatmapping")
-p.hm.input_coverage_file_names <- c(
-  "feature-postive"="all_positive_features.tsv",
-  "feature-negative"="all_negative_features.tsv",
-  "intergenic-positive"="all_positive_antifeatures.tsv",
-  "intergenic-negative"="all_negative_antifeatures.tsv"
-)
+# p.hm.cov_dir <- file.path(p.data_dir, "feature_heatmapping")
+# p.hm.input_coverage_file_names <- c(
+#   "feature-postive"="all_positive_features.tsv",
+#   "feature-negative"="all_negative_features.tsv",
+#   "intergenic-positive"="all_positive_antifeatures.tsv",
+#   "intergenic-negative"="all_negative_antifeatures.tsv"
+# )
+p.hm.cov_file <- file.path(p.data_dir, "output", "genome_coverage_counts_dupremoved.sorted.bed")
+p.hm.uniq_cov_file <- file.path(p.data_dir, "output", "genome_coverage_counts_dupremoved_uniq.sorted.bed")
 ```
 
 # Ty1 insertion quantification at tRNA genes
@@ -86,6 +88,8 @@ read_counts <- readxl::read_xlsx(path = p.library_size_file) %>%
 trna_df <- load_trna_region_data_frame(p.bt.trna_bed_path)
 ```
 
+Loaded `r nrow(trna_df)` tRNA gene locations.
+
 ```{r load-coverage-data}
 # TEST:
 # tmp <- .load_coverage_matrix(file.path(p.data_dir, p.bt.input_trna_coverage_file_names)[4]) %>%
@@ -97,13 +101,27 @@ bt.cov_df <- purrr::imap(
   .x = setNames(
     file.path(p.bt.trna_cov_dir, p.bt.input_trna_coverage_file_names),
     names(p.bt.input_trna_coverage_file_names)),
-  .f = load_coverage_data_frame) %>% 
+  .f = load_coverage_data_frame,
+  trna_feat_df = trna_df) %>% 
   dplyr::bind_rows()
+
+missing <- trna_df %>% 
+  dplyr::filter(! trna.name %in% unique(dplyr::pull(bt.cov_df, trna.name)))
+
+if (nrow(missing) > 0) {
+  stop(
+    paste(nrow(missing), " tRNA genes were not found in the tRNA coverage dataset:",
+          paste(missing$trna.name, collapse = ", "),
+          sep = "")
+  )
+}
 ```
 
 ```{r transform-data}
-bt.cov_df <- bt.cov_df %>%
-  .normalise_sequencing_library_coverage()
+bt.cov_df <- normalise_sequencing_library_coverage(
+  df = bt.cov_df,
+  read_counts = read_counts
+)
 
 libs_missing <- filter(bt.cov_df, is.na(coverage.norm)) %>% 
   distinct(library) %>% 
@@ -119,32 +137,36 @@ if (length(libs_missing) >= 1) {
 ```
 
 ```{r extract-metadata-from-library-names}
-extract_metadata_from_library_names <- function(df) {
-  df %>% 
-    mutate(
-      subunit = case_when(
-        grepl("34", library) ~ "RPC34",
-        grepl("53", library) ~ "RPC53",
-        grepl("160", library) ~ "RPC160",
-        .default = "Other"),
-      sugar = case_when(
-        grepl(x=library, pattern = "_Dex$", perl = TRUE, ignore.case = TRUE) ~ "Dextrose",
-        grepl(x=library, pattern = "_Gal$", perl = TRUE, ignore.case = TRUE) ~ "Galactose",
-        .default = NA
-      ),
-      strain.type = case_when(
-        grepl(x=library, pattern = "WT_", perl = TRUE, ignore.case = TRUE) ~ "Wild-type",
-        .default = "Mutant"
-      ),
-      group = gsub(x = library, pattern = "_(Gal|Dex)$", replacement = ''),
-      group = gsub(x = group, pattern = "(?i)r[op]c[0-9]{2,3}", replacement = ''),
-      group = stringr::str_remove(group, pattern = "deletion_set_background"),
-      group = gsub(x = group, pattern = "^(\\.|_)", replacement = '')
-    ) %>% 
-    return()
+bt.cov_df <- extract_metadata_from_library_names(bt.cov_df)
+```
+
+```{r define-category-palettes}
+
+metadata_palette_list <- bt.cov_df %>% 
+  dplyr::distinct(subunit, strain.type, sugar, group) %>% 
+  colour_metadata(
+    brewer_palette_name = c("BrBG", "Paired", "Set3", "Spectral"),
+    palette_size = 11
+  )
+
+subunit_pal_names <- setNames(
+  unique(pull(bt.cov_df, subunit)),
+  c("Blues", "Greens", "Purples", "Reds")
+)
+metadata_palette_list[["group"]] <- setNames("#969696", c("WT"))
+for (i in seq(1, length(subunit_pal_names))) {
+  n <- bt.cov_df %>%
+    filter(
+      subunit == subunit_pal_names[[i]],
+      group != "WT") %>%
+    distinct(group) %>%
+    colour_metadata(brewer_palette_name = names(subunit_pal_names)[i])
+  metadata_palette_list[["group"]] <- c(
+    metadata_palette_list[["group"]], n[["group"]]
+  )
 }
 
-bt.cov_df <- extract_metadata_from_library_names(bt.cov_df)
+
 
 ```
 
@@ -166,6 +188,7 @@ bt.cov_df %>%
     .groups = "keep"
   ) %>% 
   plot_butterfly(annot_df = nucleosome_position_df,
+                 trna_feat_df = trna_df,
                  span = p.span,
                  level = p.level,
                  .smooth_se = TRUE,
@@ -363,28 +386,27 @@ blackout_df %>%
 ## Heatmap
 
 ```{r load-heatmap-coverage-data}
+hm.cov_df <- load_genome_coverage_data_frame(p.hm.cov_file)
+```
 
-hm.cov_df <- purrr::imap(
-  .x = setNames(
-    file.path(p.hm.cov_dir, p.hm.input_coverage_file_names),
-    names(p.hm.input_coverage_file_names)
-  ),
-  .f = load_genome_coverage_data_frame) %>%
-  dplyr::bind_rows() %>%
-  .fix_gene_names() %>%
-  filter_blackout_regions(coord_df = blackout_df) %>%
-  calculate_tpm(read_counts %>% 
-                  dplyr::filter(norm_type == p.read_norm_type)) %>% 
-  dplyr::group_by(library, feature.name) %>% 
-  dplyr::reframe(
-    mean_cov = mean(coverage.pbp),
-    mean_cov.norm = mean(coverage.pbp.norm),
-    sd_cov.norm = sd(coverage.pbp.norm),
-    mean_tpm = mean(tpm)
-  ) %>% 
-  dplyr::ungroup() %>% 
-  dplyr::arrange(library, feature.name)
+```{r check-genome-coverage-read-counts, eval=FALSE}
+hm.cov_df %>% 
+  group_by(library) %>% 
+  reframe(total_coverage_count = sum(read_count)) %>% 
+  left_join(read_counts %>% 
+              .fix_library_names() %>% 
+              dplyr::filter(norm_type == "Dedup"),
+            by = "library") %>% 
+  mutate(perc = 100 * total_coverage_count / seq_library_size) %>% 
+  ggplot(aes(x = library, y = perc)) +
+  geom_bar(stat = "identity", alpha = 3/4, colour = "black") +
+  labs(x = "",
+       y = "Percentage of deduplicated reads\nin genome-wide coverage calculation") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
 
+```{r define-heatmap-metadata}
 hm.meta_df <- hm.cov_df %>% 
   extract_metadata_from_library_names() %>% 
   dplyr::distinct(library, sugar, strain.type, subunit, group) %>% 
@@ -401,7 +423,8 @@ for (panel in unique(hm.meta_df$subunit)) {
       dplyr::filter(subunit == panel) %>% 
       dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_cov.norm"))) %>% 
       tidyr::pivot_wider(names_from = "feature.name",
-                         values_from = "vals") %>% 
+                         values_from = "vals",
+                         values_fill = 0) %>% 
       tibble::column_to_rownames("library") %>%
       t(),
     meta_df = hm.meta_df %>% 
@@ -415,33 +438,52 @@ for (panel in unique(hm.meta_df$subunit)) {
 }
 ```
 
-```{r low-coverage-features, fig.cap="Bar-plot with error bars representing the mean coverage (in reads per base-pair) of each feature across. Libraries grown on destrose were excluded from this figure so as to not bias the summary functions."}
+## Bar-plot
+
+```{r coverage-insertion-site-barplot-function}
+
+plot_feature_coverage_bars <- function(df, feature_names) {
+  df %>% 
+    extract_metadata_from_library_names() %>% 
+    dplyr::filter(
+      feature.name %in% feature_names,
+      sugar == "Galactose"
+    ) %>% 
+    dplyr::mutate(
+      feature.name = reorder(feature.name, mean_cov.norm),
+      subunit = factor(subunit, levels = c("RPC160", "RPC34", "RPC53", "Other"))) %>% 
+    ggplot(aes(x = feature.name, y = mean_cov.norm)) +
+    geom_bar(aes(fill = group),
+             stat = "identity",
+             position = "dodge",
+             colour = "black") +
+    ggplot2::facet_grid(rows = vars(subunit),
+                        cols = vars(strain.type),
+                        space = "free") +
+    labs(x = "Genome feature",
+         y = "Mean coverage (reads/bp)") +
+    theme_bw() +
+    scale_fill_manual("Library",
+                      values = metadata_palette_list[["group"]],
+                      breaks = names(metadata_palette_list[["group"]])) +
+    ggplot2::theme(
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+```
+
+```{r low-coverage-insertion-site-bars, fig.cap="."}
+
 low_cov_features <- hm.cov_df %>%
   dplyr::group_by(feature.name) %>% 
   dplyr::reframe(median_cov = median(mean_cov.norm)) %>% 
   dplyr::arrange(median_cov) %>% 
-  dplyr::filter(median_cov < 1E-3) %>% 
-  dplyr::pull(feature.name)  
+  dplyr::filter(median_cov < 2E-3) %>% 
+  dplyr::pull(feature.name)
 
-hm.cov_df %>%
-  extract_metadata_from_library_names() %>% 
-  dplyr::filter(
-    feature.name %in% low_cov_features,
-    sugar == "Galactose"
-  ) %>% 
-  dplyr::mutate(feature.name = reorder(feature.name, mean_cov.norm)) %>% 
-  ggplot(aes(x = feature.name, y = mean_cov.norm)) +
-  geom_bar(stat = "summary") +
-  geom_errorbar(stat = "summary",
-                width = 0.5) +
-  ggplot2::facet_grid(rows = vars(subunit),
-                      cols = vars(strain.type)) +
-  labs(x = "Genome feature",
-       y = "Mean coverage (reads/bp)") +
-  theme_bw() +
-  ggplot2::theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
+plot_feature_coverage_bars(
+  df = hm.cov_df,
+  feature_names = low_cov_features)
 ```
 
 # Appendix
@@ -467,6 +509,7 @@ plot_mutant_and_wildtype_butterfly_helper <- function(df) {
       dplyr::filter(library == library_name | strain.type == "Wild-type",
                     sugar == "Galactose") %>%
       plot_butterfly(df = .,
+                     trna_feat_df = trna_df,
                      annot_df = nucleosome_position_df,
                      span = p.span,
                      level = p.level,
@@ -499,6 +542,30 @@ bt.cov_df %>%
 
 ## Genome-wide Ty1 insertion site analysis
 
+```{r low-coverage-features, fig.cap="Bar-plot with error bars representing the mean coverage (in reads per base-pair) of each feature across. Libraries grown on destrose were excluded from this figure so as to not bias the summary functions."}
+
+hm.cov_df %>%
+  extract_metadata_from_library_names() %>% 
+  dplyr::filter(
+    feature.name %in% low_cov_features,
+    sugar == "Galactose"
+  ) %>% 
+  dplyr::mutate(feature.name = reorder(feature.name, mean_cov.norm)) %>% 
+  ggplot(aes(x = feature.name, y = mean_cov.norm)) +
+  geom_bar(stat = "summary") +
+  geom_errorbar(stat = "summary",
+                width = 0.5) +
+  ggplot2::facet_grid(rows = vars(subunit),
+                      cols = vars(strain.type)) +
+  labs(x = "Genome feature",
+       y = "Mean coverage (reads/bp)") +
+  theme_bw() +
+  ggplot2::theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+
 ### TPM heatmap
 
 
@@ -507,7 +574,8 @@ plot_genome_coverage_heatmap(
   cov_mat = hm.cov_df %>%
     dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_tpm"))) %>% 
     tidyr::pivot_wider(names_from = "feature.name",
-                       values_from = "vals") %>% 
+                       values_from = "vals",
+                       values_fill = 0) %>% 
     tibble::column_to_rownames("library") %>%
     t(),
   meta_df = hm.meta_df,
@@ -531,3 +599,51 @@ hm.cov_df %>%
 
 The figure above shows that there is less differentiation between the different libraries when using TPM values (y-axis) compared to using coverage values (x-axis). Whether this reflects true signal or a lack of normalization in calculating coverage values is not clear.
 
+
+### Coverage using unique alignments
+
+```{r plot-uniq-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library - for unambiguous alignments. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Alignments that mapped ambiguously to multiple regions were removed."}
+hm.uniq_cov_df <- load_genome_coverage_data_frame(file_path = p.hm.uniq_cov_file)
+
+for (panel in unique(hm.meta_df$subunit)) {
+  draw(plot_genome_coverage_heatmap(
+    cov_mat = hm.uniq_cov_df %>%
+      extract_metadata_from_library_names() %>% 
+      dplyr::filter(subunit == panel) %>% 
+      dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_cov.norm"))) %>% 
+      tidyr::pivot_wider(names_from = "feature.name",
+                         values_from = "vals",
+                         values_fill = 0) %>% 
+      tibble::column_to_rownames("library") %>%
+      t(),
+    meta_df = hm.meta_df %>% 
+      dplyr::filter(subunit == panel) %>%
+      dplyr::mutate(group = ifelse(subunit == "Other",
+                                   group,
+                                   paste(subunit, group, sep = '-'))),
+    annotations = c("strain.type", "sugar"),
+    brewer_palette_name = c("Set1", "Set3")
+  ))
+}
+```
+
+### Bar-plots
+
+```{r tRNA-coverage-bars, fig.cap="."}
+
+trna_features <- hm.cov_df %>%
+  dplyr::filter(grepl(pattern = "tRNA", x = feature.name)) %>% 
+  pull(feature.name) %>% 
+  unique()
+  
+plot_feature_coverage_bars(
+  df = hm.cov_df,
+  feature_names = trna_features
+)
+
+plot_feature_coverage_bars(
+  df = hm.uniq_cov_df,
+  feature_names = trna_features
+)
+
+```
