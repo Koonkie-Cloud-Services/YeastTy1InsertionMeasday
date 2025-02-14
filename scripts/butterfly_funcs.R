@@ -27,7 +27,7 @@ load_trna_region_data_frame <- function(file_path) {
     return()
 }
 
-.add_trna_names <- function(df) {
+.add_trna_names <- function(df, trna_feat_df) {
   df %>% 
     group_by(chr, rel.position, proximity, strand) %>%
     mutate(trna = row_number()) %>%
@@ -41,7 +41,7 @@ load_trna_region_data_frame <- function(file_path) {
         .default = NA)
     ) %>% 
     ungroup() %>%
-    left_join(trna_df %>%
+    left_join(trna_feat_df %>%
                 distinct(chr, trna.name, start, end) %>%
                 pivot_longer(where(is.numeric),
                              names_to = "position",
@@ -50,7 +50,7 @@ load_trna_region_data_frame <- function(file_path) {
               by = c("chr", "trna.coord")) %>% 
     dplyr::relocate(any_of(c("rel.position", "trna.name", "strand")),
                     .after = chr) %>% 
-    dplyr::select(!any_of(c("trna", "trna.coord", "start", "end", "score"))) %>% 
+    dplyr::select(!any_of(c("trna", "trna.coord", "start", "end", "score"))) %>%
     return()
 }
 
@@ -91,15 +91,15 @@ load_trna_region_data_frame <- function(file_path) {
     return()
 }
 
-load_coverage_data_frame <- function(file_path, index) {
+load_coverage_data_frame <- function(file_path, index, ...) {
   .load_coverage_matrix(file_path) %>% 
     .separate_strand_and_proximity(index = index) %>% 
-    .add_trna_names() %>% 
+    .add_trna_names(...) %>% 
     .pivot_coverage_longer_and_aggregate() %>%
     return()
 }
 
-.normalise_sequencing_library_coverage <- function(df) {
+normalise_sequencing_library_coverage <- function(df, read_counts) {
   df %>% 
     left_join(read_counts %>% 
                 filter(norm_type == p.read_norm_type),
@@ -110,8 +110,8 @@ load_coverage_data_frame <- function(file_path, index) {
 }
 
 
-.get_trna_gene_df <- function(start_pos=1000) {
-  trna_df %>% 
+.get_trna_gene_df <- function(trna_feat_df, start_pos=1000) {
+  trna_feat_df %>% 
     dplyr::mutate(length = end - start) %>%
     dplyr::reframe(length = median(length)) %>% 
     dplyr::mutate(xmin = start_pos,
@@ -129,6 +129,7 @@ load_coverage_data_frame <- function(file_path, index) {
 }
 
 plot_butterfly <- function(df,
+                           trna_feat_df,
                            annot_df,
                            span = 0.75,
                            level = 0.95,
@@ -207,7 +208,7 @@ plot_butterfly <- function(df,
                                              forward = forward,
                                              label = label),
                                 data = .get_trna_tss_df()) +
-    gggenes::geom_gene_arrow(data = .get_trna_gene_df(),
+    gggenes::geom_gene_arrow(data = .get_trna_gene_df(trna_feat_df),
                              ggplot2::aes(xmin = xmin,
                                           xmax = xmax,
                                           forward = forward,
