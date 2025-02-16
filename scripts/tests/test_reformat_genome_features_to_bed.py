@@ -15,17 +15,17 @@ class TestParseGFFToBED(unittest.TestCase):
         self.bed_file = "test_output.bed"
         self.gff_content = """##gff-version 3
 NC_001133.9\tRefSeq\tregion\t1\t230218\t.\t+\t.\tID=NC_001133.9:1..230218;Dbxref=taxon:559292;Name=I;chromosome=I;gbkey=Src;genome=chromosome;mol_type=genomic DNA;strain=S288C
-chr1\t.\tgene\t1000\t2000\t.\t+\t.\tID=gene1;Name=Gene1
-chr1\t.\ttRNA\t3000\t4000\t.\t-\t.\tID=tRNA1;Name=tRNA1
-chr1\t.\trepeat_region\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1
+NC_001133.9\t.\tgene\t1000\t2000\t.\t+\t.\tID=gene1;Name=Gene1
+NC_001133.9\t.\ttRNA\t3000\t4000\t.\t-\t.\tID=tRNA1;Name=tRNA1
+NC_001133.9\t.\trepeat_region\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1
+NC_001224.1	RefSeq	region	1	85779	.	+	.	ID=NC_001224.1:1..85779;Dbxref=taxon:559292;Name=MT;gbkey=Src;genome=mitochondrion;mol_type=genomic DNA;strain=S288C;Is_circular=true;substrain=FY1679
     """
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content)
-        db_fn = create_gff_db(gff_file = self.gff_file)
-        self.gff_db = gffutils.FeatureDB(db_fn)
-        self.expected_bed_content = """1000\t2000\tgene1(gene)\t+
-3000\t4000\ttRNA\t-
-5000\t6000\tLTR\t+
+        self.gff_db = create_gff_db(gff_file = self.gff_file)
+        self.expected_bed_content = """chrI\t1000\t2000\tgene1(gene)\t+
+chrI\t3000\t4000\ttRNA\t-
+chrI\t5000\t6000\tLTR\t+
 """
 
     def tearDown(self):
