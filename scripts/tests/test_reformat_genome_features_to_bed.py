@@ -19,6 +19,7 @@ NC_001133.9\t.\tgene\t1000\t2000\t.\t+\t.\tID=gene1;Name=Gene1
 NC_001133.9\t.\ttRNA\t3000\t4000\t.\t-\t.\tID=tRNA1;Name=tRNA1
 NC_001133.9\t.\trepeat_region\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1
 NC_001224.1	RefSeq	region	1	85779	.	+	.	ID=NC_001224.1:1..85779;Dbxref=taxon:559292;Name=MT;gbkey=Src;genome=mitochondrion;mol_type=genomic DNA;strain=S288C;Is_circular=true;substrain=FY1679
+NC_001224.1     RefSeq  gene    731     802     .       +       .       ID=gene-tP(UGG)Q;Dbxref=GeneID:854578,SGD:S0000073>
     """
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content)

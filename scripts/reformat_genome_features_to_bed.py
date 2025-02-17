@@ -89,17 +89,27 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
     chrom_prefix = kwargs.get("chrom_prefix", "chr")
     genome_skip = kwargs.get("genome_skip", ['mitochondrion', 'plasmid'])
+    chrom_skip = kwargs.get("chrom_skip", ['MT'])
     chrom = ""
     acc = 0
     for feature in gff_db.all_features():
         acc += 1
-        if get_genome_of_feature(feature) in genome_skip:
+
+        if feature.featuretype == "region":
+            try:
+                chrom = feature.attributes.get("Name")[0]
+            except KeyError:
+                raise ValueError(
+                    f"Feature {acc}: a region must have a 'Name' attribute.\n{print(feature)}"
+                )
+
+        if get_genome_of_feature(feature) in genome_skip or chrom in chrom_skip:
             continue
-
-        if not verify_feature_type(feature):
+        elif not verify_feature_type(feature):
             raise ValueError(f"Feature {acc}: unknown feature type '{feature.featuretype}'.")
-
-        if feature.featuretype not in SKIPPED_FEATURE_TYPES:
+        elif feature.featuretype in SKIPPED_FEATURE_TYPES:
+            continue
+        else:
             if chrom == "":
                 raise AssertionError(f"No chromosome found for feature '{feature.seqid}'.")
 
@@ -113,15 +123,6 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             outf.write(
                 "\t".join([str(i) for i in bed_row]) + "\n"
             )
-        elif feature.featuretype == "region":
-            try:
-                chrom = feature.attributes["chromosome"][0]
-            except KeyError:
-                raise ValueError(
-                    f"Feature {acc}: a region must have a chromosome attribute.\n{print(feature)}"
-                )
-        else:
-            continue
 
     outf.close()
     return
