@@ -4,6 +4,37 @@ import gffutils
 import argparse
 import sys
 
+FEATURE_TYPE_NAME_MAP = {
+    "gene": "gene",
+    "telomere": "telomere",
+    "centromere": "centromere",
+    "origin_of_replication": "rep_origin",
+    "tRNA": "tRNA",
+    "ncRNA": "ncRNA",
+    "snoRNA": "snoRNA",
+    "snRNA": "snRNA",
+    "rRNA": "rRNA",
+    "SRP_RNA": "SRP_RNA",
+    "pseudogene": "pseudogene",
+    "antisense_RNA": "antisense_RNA",
+    "telomerase_RNA": "telomerase_RNA",
+    "sequence_feature": "sequence_feature",
+    "mobile_genetic_element": "mobile_element",
+    "repeat_region": "LTR",
+    "long_terminal_repeat": "LTR",
+}
+SKIPPED_FEATURE_TYPES = [
+    "mRNA",
+    "CDS",
+    "exon",
+    "intron",
+    "region",
+    "transcript",
+    "RNase_P_RNA",
+    "RNase_MRP_RNA",
+    "regulatory_region",
+]
+VALID_FEATURE_TYPES = list(FEATURE_TYPE_NAME_MAP) + SKIPPED_FEATURE_TYPES
 
 def get_options(args=sys.argv[1:]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -50,6 +81,9 @@ def get_genome_of_feature(feature: gffutils.Feature) -> str:
     except KeyError:
         return None
 
+def verify_feature_type(feature: gffutils.Feature) -> bool:
+    return feature.featuretype in VALID_FEATURE_TYPES
+
 def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> None:
     outf = open(bed_file, "w")
 
@@ -62,15 +96,10 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
         if get_genome_of_feature(feature) in genome_skip:
             continue
 
-        if feature.featuretype in [
-            "gene",
-            "telomere",
-            "centromere",
-            "origin_of_replication",
-            "tRNA",
-            "repeat_region",
-            "mobile_element",
-        ]:
+        if not verify_feature_type(feature):
+            raise ValueError(f"Feature {acc}: unknown feature type '{feature.featuretype}'.")
+
+        if feature.featuretype not in SKIPPED_FEATURE_TYPES:
             if chrom == "":
                 raise AssertionError(f"No chromosome found for feature '{feature.seqid}'.")
 
@@ -99,19 +128,11 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
 
 def get_feature_name(feature: gffutils.Feature) -> str:
-    feature_type_map = {
-        "telomere": "telomere",
-        "centromere": "centromere",
-        "origin_of_replication": "rep_origin",
-        "tRNA": "tRNA",
-        "repeat_region": "LTR",
-        "mobile_element": "LTR",
-    }
     if feature.featuretype == "gene":
         return f"{feature.id}(gene)"
-    elif feature.featuretype in feature_type_map:
-        return feature_type_map[feature.featuretype]
-    raise ValueError(f"Unknown feature type: {feature.featuretype}")
+    elif feature.featuretype in FEATURE_TYPE_NAME_MAP:
+        return FEATURE_TYPE_NAME_MAP[feature.featuretype]
+    raise ValueError(f"Unable to retrieve name of feature type: {feature.featuretype}")
 
 
 def main():
@@ -119,104 +140,6 @@ def main():
     gff_db = create_gff_db(opts.p_i_gff)
     parse_gff_to_bed(gff_db, opts.p_o_bed)
     return
-
-
-    # for record in SeqIO.parse(open(sys.argv[1], "rU"), "genbank"):
-    #     for feature in record.features:
-    #         if feature.type == "gene":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 # name = "gene"
-    #                 name = feature.qualifiers["gene"][0] + "(gene)"
-    #             except:
-    #                 # some features only have a locus tag
-    #                 name = feature.qualifiers["locus_tag"][0] + "(gene)"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #         if feature.type == "telomere":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 name = "telomere"
-    #             except:
-    #                 name = "false"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #         if feature.type == "centromere":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 name = "centromere"
-    #             except:
-    #                 name = "false"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #         if feature.type == "rep_origin":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 name = "rep_origin"
-    #             except:
-    #                 name = "false"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #         if feature.type == "tRNA":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 name = "tRNA"
-    #             except:
-    #                 name = "false"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #         if feature.type == "repeat_region":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 name = "LTR"
-    #             except:
-    #                 name = "false"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #         if feature.type == "mobile_element":
-    #             start = feature.location.start.position
-    #             stop = feature.location.end.position
-    #             try:
-    #                 name = "LTR"
-    #             except:
-    #                 name = "false"
-    #             if feature.strand < 0:
-    #                 strand = "-"
-    #             else:
-    #                 strand = "+"
-    #             bed_line = "{0}\t{1}\t{2}\t{3}\n".format(start, stop, name, strand)
-    #             outf.write(bed_line)
-    #     outf.close()
 
 
 if __name__ == "__main__":
