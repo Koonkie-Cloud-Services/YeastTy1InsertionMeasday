@@ -104,7 +104,29 @@ chrI\t5000\t6000\trepeat_region\t+
         # self.assertEqual(2, self.gff_db.count_features_of_type("upstream_tRNA"))
         return
     
+    def test_load_buffer_feature_specifications(self):
+        from reformat_genome_features_to_bed import load_buffer_feature_specifications, BUFFER_SPEC
+        buffer_spec_file = "test_buffer_spec.tsv"
+        buffer_spec_content = """# Feature name\tBuffer prefix\tSeparator character\tBuffer length (bp)
+centromere\tperi\t\t1000
+tRNA\tupstream,downstream\t_\t500
+"""
 
+        with open(buffer_spec_file, 'w') as fh:
+            fh.write(buffer_spec_content.strip())
+
+        buffer_specs = load_buffer_feature_specifications(buffer_spec_file)
+
+        expected_specs = {
+            "centromere": BUFFER_SPEC(feature_name="centromere", prefix=["peri"], sep="", length=1000),
+            "tRNA": BUFFER_SPEC(feature_name="tRNA", prefix=["upstream", "downstream"], sep="_", length=500)
+        }
+
+        self.assertEqual(buffer_specs, expected_specs)
+
+        if os.path.exists(buffer_spec_file):
+            os.remove(buffer_spec_file)
+        return
 
 if __name__ == "__main__":
     unittest.main()
