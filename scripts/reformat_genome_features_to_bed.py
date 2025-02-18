@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
+import os
 import argparse
 import sys
 from typing import List, Dict
+from collections import namedtuple
 
 import gffutils
 from gffutils import inspect
@@ -12,6 +14,7 @@ from gffutils import create
 FEATURE_TYPE_NAME_MAP = {
     "gene": "gene",
     "telomere": "telomere",
+    "pericentromere": "pericentromere",
     "centromere": "centromere",
     "origin_of_replication": "rep_origin",
     "tRNA": "tRNA",
@@ -25,11 +28,12 @@ FEATURE_TYPE_NAME_MAP = {
     "telomerase_RNA": "telomerase_RNA",
     "sequence_feature": "sequence_feature",
     "mobile_genetic_element": "mobile_element",
-    "repeat_region": "LTR",
+    "repeat_region": "repeat_region",
     "long_terminal_repeat": "LTR",
 }
 SKIPPED_FEATURE_TYPES = [
     "mRNA",
+    "rRNA",
     "CDS",
     "exon",
     "intron",
@@ -41,6 +45,8 @@ SKIPPED_FEATURE_TYPES = [
 ]
 VALID_FEATURE_TYPES = list(FEATURE_TYPE_NAME_MAP) + SKIPPED_FEATURE_TYPES
 TMP_GFF_PATH = "tmp.gff"
+
+BUFFER_SPEC = namedtuple("BUFFER_SPEC", ["feature_name", "prefix", "sep", "length"])
 
 def get_options(args=sys.argv[1:]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -56,6 +62,7 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
         "--annotation_table",
         dest="p_i_annot",
         type=str,
+        required=False,
         help="A BED file containing additional annotations to add to the GFF"
     )
     parser.add_argument(
@@ -66,17 +73,11 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--buffer_features",
-        dest="p_buffer_features",
-        nargs="+",
-        default=["tRNA"],
-        help="A list of features to add surrounding upstream and downstream region features"
-    )
-    parser.add_argument(
-        "--buffer_length",
-        dest="p_buffer_length",
-        type=int,
-        default=1000,
-        help="The length of the buffer regions to add"
+        dest="p_i_buffer_features",
+        type=str,
+        required=False,
+        help="A TSV file containing features to add surrounding upstream and downstream region features."
+        "The table should have the following columns: 1. Feature name, 2. Buffer prefix, 3. Separator character 4. Buffer length (bp)"
     )
     return parser.parse_args(args=args)
 
@@ -135,8 +136,9 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
     chrom_skip = kwargs.get("chrom_skip", ['MT'])
     feature_types_to_skip = kwargs.get("feature_types_to_skip", SKIPPED_FEATURE_TYPES)
 
-    buffer_regions = kwargs.get("buffer_regions", {})
     annot_features = kwargs.get("annot_features", {})
+    if annot_features is None:
+        annot_features = {}
 
     chrom = ""
     acc = 0
@@ -164,12 +166,14 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
             ft_inst.chrom = chrom_prefix + chrom
             try:
-                buffer_ft = buffer_regions[ft_inst.id]
+                buffer_ft = annot_features[ft_inst.id]
                 for ft in buffer_ft:
                     ft.chrom = chrom_prefix + chrom
                     outf.write(format_feature_as_bed(ft) + "\n")
             except KeyError:
                 pass
+            except TypeError:
+                raise TypeError(f"Feature '{ft_inst.id}' has an invalid type: {type(annot_features[ft_inst.id])}")
             outf.write(format_feature_as_bed(ft_inst) + "\n")
 
     print(f"{acc} features written to {bed_file}")
@@ -231,7 +235,10 @@ def write_features_to_file(features: List[gffutils.Feature], out_file: str = '')
             
     return out_file
 
-def add_buffer_regions(gff_db: gffutils.FeatureDB, buffer_features: list, buffer_length = 1000) -> Dict[str, List[gffutils.Feature]]:
+def create_buffered_features(gff_db: gffutils.FeatureDB,
+                             buffer_feature: str,
+                             buffer_length = 1000,
+                             **kwargs) -> Dict[str, List[gffutils.Feature]]:
     """Add upstream and downstream buffer regions to the GFF database
 
     Args:
@@ -245,17 +252,28 @@ def add_buffer_regions(gff_db: gffutils.FeatureDB, buffer_features: list, buffer
     new_features = {}
     chrom_lengths = {}
 
-    for ft_name in buffer_features:
-        VALID_FEATURE_TYPES.append(f"upstream_{ft_name}")
-        VALID_FEATURE_TYPES.append(f"downstream_{ft_name}")
-        FEATURE_TYPE_NAME_MAP[f"upstream_{ft_name}"] = f"upstream_{ft_name}"
-        FEATURE_TYPE_NAME_MAP[f"downstream_{ft_name}"] = f"downstream_{ft_name}"
+    prefixes = kwargs.get('prefixes', ['upstream', 'downstream'])
+    prefix_sep = kwargs.get('prefix_sep', '_')
+
+    if type(prefixes) is str:
+        raise AssertionError("Buffer prefix must be a list of length 1 or 2")
+
+    if len(prefixes) == 1:
+        prefixes = prefixes * 2
+    elif len(prefixes) == 2:
+        pass
+    else:
+        raise ValueError("Buffer prefix must be a list of length 1 or 2")
+
+    for i in prefixes:
+        VALID_FEATURE_TYPES.append(f"{i}{prefix_sep}{buffer_feature}")
+        FEATURE_TYPE_NAME_MAP[f"{i}{prefix_sep}{buffer_feature}"] = f"{i}{prefix_sep}{buffer_feature}"
 
     for ft_inst in gff_db.all_features():
         if ft_inst.featuretype == "region":
             # get chromosome length
             chrom_lengths[ft_inst.chrom] = ft_inst.stop
-        if ft_inst.featuretype in buffer_features:
+        if ft_inst.featuretype == buffer_feature:
             if ft_inst.strand == "+":
                 us_start = max(ft_inst.start - buffer_length, 0)
                 us_stop = ft_inst.start # - 1
@@ -268,16 +286,18 @@ def add_buffer_regions(gff_db: gffutils.FeatureDB, buffer_features: list, buffer
                 ds_stop = max(ft_inst.start, 0)
             else:
                 raise ValueError(f"Feature {ft_inst.id} has an invalid strand: {ft_inst.strand}")
-        
-            upstream = feature.feature_from_line(
-                        f"{ft_inst.chrom}\t{ft_inst.source}\tupstream_{ft_inst.featuretype}\t{us_start}\t{us_stop}\t.\t{ft_inst.strand}\t.\tID={ft_inst.id}_upstream"
+
+            for prefix, coords in zip(prefixes, [[us_start, us_stop], [ds_start, ds_stop]]):
+                ft_type = f"{prefix}{prefix_sep}{ft_inst.featuretype}"
+                ft_id = f"{ft_inst.id}{prefix_sep}{prefix}"
+                buff_feat = feature.feature_from_line(
+                        f"{ft_inst.chrom}\t{ft_inst.source}\t{ft_type}\t{coords[0]}\t{coords[1]}\t.\t{ft_inst.strand}\t.\tID={ft_id}"
                     )
-            upstream.id = f"{ft_inst.id}_upstream"
-            downstream = feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tdownstream_{ft_inst.featuretype}\t{ds_start}\t{ds_stop}\t.\t{ft_inst.strand}\t.\tID={ft_inst.id}_downstream"
-            )
-            downstream.id = f"{ft_inst.id}_downstream"
-            new_features[ft_inst.id] = [upstream, downstream]
+                buff_feat.id = ft_id
+                try:
+                    new_features[ft_inst.id].append(buff_feat)
+                except KeyError:
+                    new_features[ft_inst.id] = [buff_feat]
         else:
             pass
     
@@ -293,6 +313,55 @@ def add_buffer_regions(gff_db: gffutils.FeatureDB, buffer_features: list, buffer
     # gff_db = gff_db.update(new_features)
 
     return new_features
+
+def load_buffer_feature_specifications(buffer_spec_file: str) -> Dict[str, BUFFER_SPEC]:
+    if not os.path.exists(buffer_spec_file):
+        raise FileNotFoundError(f"Buffer specification file not found: {buffer_spec_file}")
+    
+    buffer_specs = {}
+
+    with open(buffer_spec_file, "r") as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+
+                try:
+                    ft_name, prefix, prefix_sep, length = line.strip().split("\t")
+                except ValueError:
+                    raise ValueError(f"Invalid buffer specification: {line}")
+
+                try:
+                    buffer_specs[ft_name] = BUFFER_SPEC(
+                        feature_name=ft_name,
+                        prefix=prefix.split(','),
+                        sep=prefix_sep,
+                        length=int(length)
+                        )
+                except ValueError:
+                    raise ValueError(f"Unable to use feature buffer specification:\n{line}\n")
+
+    return buffer_specs
+
+
+def add_buffered_features(gff_db: gffutils.FeatureDB,
+                          buffer_spec_file: str = '',
+                          **kwargs) -> None:
+    buffer_feature_dict = {}
+    buffer_spec = kwargs.get("buffer_spec", {})
+    
+    if not buffer_spec:  
+        if not buffer_spec_file:
+            return
+
+        buffer_spec = load_buffer_feature_specifications(buffer_spec_file)
+    
+    for _ft_name, spec in buffer_spec.items():
+            buffer_feature_dict.update(create_buffered_features(gff_db,
+                                                                buffer_feature=spec.feature_name,
+                                                                buffer_length=spec.length,
+                                                                prefixes=spec.prefix,
+                                                                prefix_sep=spec.sep))
+    return buffer_feature_dict
 
 def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB, annot_table: str) -> None:
     """Add user-specified annotations to the GFF database
@@ -325,17 +394,15 @@ def main():
     print("Merging redundant features")
     remove_redundant_features(gff_db)
     print("Adding buffer regions")
-    buffer_regions = add_buffer_regions(gff_db,
-                                        buffer_features=opts.p_buffer_features,
-                                        buffer_length=opts.p_buffer_length)
-    print("Adding additional annotations")
-    annot_features = update_gff_with_additional_annotations(gff_db,
-                                                            annot_table=opts.p_i_annot)
-    print("Parsing GFF to BED")
+    buffer_features = add_buffered_features(gff_db,
+                                            opts.p_i_buffer_features)
+    # print("Adding additional annotations")
+    # annot_features = update_gff_with_additional_annotations(gff_db,
+    #                                                         annot_table=opts.p_i_annot)
+    print("Writing GFF features to BED")
     parse_gff_to_bed(gff_db,
                      opts.p_o_bed,
-                     buffer_regions=buffer_regions,
-                     annot_features=annot_features)
+                     annot_features=buffer_features)
     return
 
 

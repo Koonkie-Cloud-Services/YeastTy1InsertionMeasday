@@ -28,7 +28,7 @@ NC_001224.1\tRefSeq\tgene\t731\t802\t.\t+\t.\tID=gene-tP(UGG)Q;Dbxref=GeneID:854
         self.expected_bed_content = """chrI\t640\t700\ttRNA\t+
 chrI\t1000\t2000\tgene1(gene)\t+
 chrI\t3000\t4000\ttRNA\t-
-chrI\t5000\t6000\tLTR\t+
+chrI\t5000\t6000\trepeat_region\t+
 """
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content.strip())
@@ -61,19 +61,24 @@ chrI\t5000\t6000\tLTR\t+
         self.assertEqual(1, self.gff_db.count_features_of_type("centromere"))
         return
 
-    def test_update_gff_with_additional_annotations(self):
-        from reformat_genome_features_to_bed import update_gff_with_additional_annotations
-        update_gff_with_additional_annotations(self.gff_db,
-                                               annot_table="test_annot_table")
-        self.assertEqual(13, self.gff_db.count_features_of_type())
+    def test_add_buffered_features(self):
+        from reformat_genome_features_to_bed import add_buffered_features, remove_redundant_features, BUFFER_SPEC
+        remove_redundant_features(self.gff_db)
+        test_buffer = BUFFER_SPEC(feature_name="centromere", length=1000, prefix=["peri"], sep="")
+        res = add_buffered_features(self.gff_db, buffer_spec = {"centromere": test_buffer})
+        for ft_id, features in res.items():
+            self.assertEqual(2, len(features))
+        
+        # # TODO: Add features directly to GFF database
+        # self.assertEqual(13, self.gff_db.count_features_of_type())
         return
     
-    def test_add_buffer_regions(self):
-        from reformat_genome_features_to_bed import add_buffer_regions
+    def test_create_buffered_features(self):
+        from reformat_genome_features_to_bed import create_buffered_features
         from gffutils import Feature
-        res = add_buffer_regions(self.gff_db,
-                                 buffer_features=["tRNA"],
-                                 buffer_length=1000)
+        res = create_buffered_features(self.gff_db,
+                                       buffer_feature="tRNA",
+                                       buffer_length=1000)
         self.assertEqual(['tRNA1', 'tRNA2'], list(res.keys()))
         self.assertEqual(2, len(res['tRNA1']))
         self.assertIsInstance(res['tRNA1'][0], Feature)
@@ -98,6 +103,8 @@ chrI\t5000\t6000\tLTR\t+
         # self.assertEqual(2, self.gff_db.count_features_of_type("downstream_tRNA"))
         # self.assertEqual(2, self.gff_db.count_features_of_type("upstream_tRNA"))
         return
+    
+
 
 if __name__ == "__main__":
     unittest.main()
