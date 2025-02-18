@@ -1,8 +1,8 @@
 #!/bin/bash
 
-if [ "$#" -ne 0 ]; then
+if [ "$#" -lt 1 ]; then
     echo "ERROR: unexpected number of arguments provided"
-    echo -e "USAGE:\n$0"
+    echo -e "USAGE:\n$0 <working directory> [BAM suffix]"
     exit
 fi
 
@@ -10,21 +10,24 @@ fi
 # DEFINE ANALYSIS PARAMETERS #
 ##                          ##
 # Define directory paths
-p_working_dir="data"
+p_working_dir=$1
 p_input_dir="$p_working_dir/input"
 p_output_dir="$p_working_dir/output"
 p_tmp_dir="$p_working_dir/.tmp"
 
 # Analysis parameters
-p_bam_suffix="dupremoved_uniq.sorted"
+p_bam_suffix=$2
+if [ -z "$p_bam_suffix" ]; then
+	p_bam_suffix="dupremoved_uniq.sorted"
+fi
 
 # Input paths
 p_i_bam_dir="$p_input_dir/BAMs"
 p_i_features_dir="$p_input_dir/feature_locations"
 p_i_sample_name_map="$p_input_dir/hiseq_sample_id_map.tsv"
-p_i_features_file="$p_i_features_dir/all_features.bed"
-p_i_trna_locations_file="$p_i_features_dir/trna_regions.edited.bed"
-p_i_chr_lengths_file="$p_i_features_dir/chromosome_lengths.tsv"
+p_i_trna_locations_file="$p_input_dir/trna_regions.edited.bed"
+p_i_chr_lengths_file="$p_input_dir/chromosome_lengths.tsv"
+p_i_features_file="$p_i_features_dir/Saccharomyces_cerevisiae_S288C.bed"
 
 # Output paths
 p_o_bam_dir="$p_output_dir/BAMs"
@@ -49,6 +52,11 @@ t_neg_anti_features_file="$p_tmp_dir/negative_anti-features.bed"
 
 if [ ! -d $working_dir ]; then
 	echo "[ERROR] working directory '$working_dir' doesn't exist"
+	exit
+fi
+
+if [ ! -d $p_input_dir ]; then
+	echo "[ERROR] input directory '$p_input_dir' doesn't exist"
 	exit
 fi
 

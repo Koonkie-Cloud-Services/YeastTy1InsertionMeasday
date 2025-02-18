@@ -14,12 +14,14 @@ fi
 
 cat $1 | \
 	grep '\+$' | \
+	bedtools sort -g $2 -i - | \
 	bedtools complement -i - -g $2 | \
 	awk -v id="anti-feature" -v strand="+" '{ OFS="\t"; print $0,id,strand }' \
 	>> "$output_bed.tmp"
 
 cat $1 | \
 	grep '\-$' | \
+	bedtools sort -g $2 -i - | \
 	bedtools complement -i - -g $2 | \
 	awk -v id="anti-feature" -v strand="-" '{ OFS="\t"; print $0,id,strand }' \
 	>> "$output_bed.tmp"

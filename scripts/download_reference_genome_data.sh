@@ -1,6 +1,12 @@
 #!/bin/bash
 
-output_dir="data/output/feature_locations/"
+output_dir=$1
+
+if [ ! -d $output_dir ]; then
+	echo "[ERROR] output directory '$output_dir' doesn't exist"
+	exit
+fi
+
 file_prefix="Saccharomyces_cerevisiae_S288C"
 ncbi_ftp_path="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/045/GCF_000146045.2_R64/GCF_000146045.2_R64_genomic"
 

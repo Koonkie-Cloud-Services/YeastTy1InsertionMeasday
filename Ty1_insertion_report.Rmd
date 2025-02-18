@@ -5,6 +5,8 @@ output:
     toc: TRUE
     toc_depth: 1
     keep_md: TRUE
+params:
+  
 ---
 
 # Executive summary
@@ -43,13 +45,13 @@ require(ComplexHeatmap)
 ```
 
 ```{r load-scripts}
-source("KOMB/scripts/heatmap_funcs.R")
-source("KOMB/scripts/butterfly_funcs.R")
+source("scripts/heatmap_funcs.R")
+source("scripts/butterfly_funcs.R")
 ```
 
 ```{r load-parameters}
 # GLOBAL
-p.data_dir <- file.path("KOMB", "data")
+p.data_dir <- file.path("data")
 p.library_size_file <- file.path(p.data_dir, "input", "library_size_data.xlsx")
 p.read_norm_type <- "raw"
 
@@ -61,7 +63,7 @@ p.bt.input_trna_coverage_file_names <- c(
   "downstream-positive"="all_libraries_coverage_downstream_positive_trnas_headered.tsv",
   "downstream-negative"="all_libraries_coverage_downstream_negative_trnas_headered.tsv"
 )
-p.bt.trna_bed_path <- file.path(p.data_dir, "output", "feature_locations", "trna_regions.bed")
+p.bt.trna_bed_path <- file.path(p.data_dir, "output", "genome_coverage", "output", "feature_locations", "trna_regions.bed")
 
 # HEATMAP
 # p.hm.cov_dir <- file.path(p.data_dir, "feature_heatmapping")
@@ -71,8 +73,8 @@ p.bt.trna_bed_path <- file.path(p.data_dir, "output", "feature_locations", "trna
 #   "intergenic-positive"="all_positive_antifeatures.tsv",
 #   "intergenic-negative"="all_negative_antifeatures.tsv"
 # )
-p.hm.cov_file <- file.path(p.data_dir, "output", "genome_coverage_counts_dupremoved.sorted.bed")
-p.hm.uniq_cov_file <- file.path(p.data_dir, "output", "genome_coverage_counts_dupremoved_uniq.sorted.bed")
+p.hm.cov_file <- file.path(p.data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved.sorted.bed")
+p.hm.uniq_cov_file <- file.path(p.data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved_uniq.sorted.bed")
 ```
 
 # Ty1 insertion quantification at tRNA genes
