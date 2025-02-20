@@ -9,6 +9,7 @@ fi
 
 file_prefix="Saccharomyces_cerevisiae_S288C"
 ncbi_ftp_path="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/045/GCF_000146045.2_R64/GCF_000146045.2_R64_genomic"
+sgd_ftp_path="http://sgd-archive.yeastgenome.org/sequence/S288C_reference/NCBI_genome_source"
 
 feature_file_path="$output_dir/$file_prefix.gff"
 genbank_file_path="$output_dir/$file_prefix.gbff"
@@ -34,6 +35,6 @@ fi
 # for i in $(seq -f "%02g" 1 16); do
 #   echo $i
 #   curl \
-#     http://sgd-archive.yeastgenome.org/sequence/S288C_reference/NCBI_genome_source/chr0$i.gbf > \
+#     ${sgd_ftp_path}/chr$i.gbf > \
 #     "$output_dir/${file_prefix}_chr${i}.gbff"
 # done

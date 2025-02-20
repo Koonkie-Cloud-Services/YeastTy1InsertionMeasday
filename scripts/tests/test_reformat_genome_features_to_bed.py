@@ -17,7 +17,7 @@ NC_001133.9\tRefSeq\tregion\t1\t230218\t.\t+\t.\tID=NC_001133.9:1..230218;Dbxref
 NC_001133.9\tMock\ttRNA\t640\t700\t.\t+\t.\tID=tRNA1;Name=tRNA1
 NC_001133.9\tMock\tgene\t1000\t2000\t.\t+\t.\tID=gene1;Name=Gene1
 NC_001133.9\tMock\ttRNA\t3000\t4000\t.\t-\t.\tID=tRNA2;Name=tRNA2
-NC_001133.9\tMock\trepeat_region\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1
+NC_001133.9\tMock\tlong_terminal_repeat\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1
 NC_001133.9\tRefSeq\tcentromere\t151465\t151582\t.\t+\t.\tID=id-NC_001133.9:151465..151582;Dbxref=SGD:S000028887;Name=CEN1;chromosome=I
 NC_001133.9\tRefSeq\tcentromere\t151465\t151474\t.\t+\t.\tID=id-NC_001133.9:151465..151474;Note=CEN1
 NC_001133.9\tRefSeq\tcentromere\t151475\t151557\t.\t+\t.\tID=id-NC_001133.9:151475..151557;Note=CEN1
@@ -28,7 +28,7 @@ NC_001224.1\tRefSeq\tgene\t731\t802\t.\t+\t.\tID=gene-tP(UGG)Q;Dbxref=GeneID:854
         self.expected_bed_content = """chrI\t640\t700\ttRNA\t+
 chrI\t1000\t2000\tgene1(gene)\t+
 chrI\t3000\t4000\ttRNA\t-
-chrI\t5000\t6000\trepeat_region\t+
+chrI\t5000\t6000\tLTR\t+
 """
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content.strip())
@@ -126,6 +126,31 @@ tRNA\tupstream,downstream\t_\t500
 
         if os.path.exists(buffer_spec_file):
             os.remove(buffer_spec_file)
+        return
+
+    def test_get_feature_name(self):
+        from reformat_genome_features_to_bed import get_feature_name
+        from gffutils import Feature
+        from gffutils.feature import feature_from_line
+        with self.subTest("Test getting feature name for gene feature"):
+            gene_feature = Feature(seqid="chrI", source="Mock", featuretype="gene", start=1000, end=2000, strand="+", id="gene1", attributes={"ID": ["gene1"]})
+            self.assertEqual(get_feature_name(gene_feature), "gene1(gene)")
+
+        with self.subTest("Test getting feature name for tRNA feature"):
+            trna_feature = Feature(seqid="chrI", source="Mock", featuretype="tRNA", start=640, end=700, strand="+", attributes={"ID": ["tRNA1"]})
+            self.assertEqual(get_feature_name(trna_feature), "tRNA")
+
+        with self.subTest("Test getting feature name for mobile_genetic_element feature"):
+            repeat_feature = Feature(seqid="NC_001133.9", source="Mock", featuretype="mobile_genetic_element", start=160238, end=166162, strand="-", attributes={"ID": ["id-NC_001133.9:160238..166162"], "gbkey": ["mobile_element"], "mobile_element_type": ["retrotransposon:YARCTy1-1"]})
+            self.assertEqual(get_feature_name(repeat_feature), "Ty1(retrotransposon)")
+
+        with self.subTest("Test getting feature name for sequence_feature"):
+            sequence_feature = feature_from_line("NC_001134.8\tRefSeq\tsequence_feature\t549229\t549251\t.\t+\t.\tID=id-NC_001134.8:549229..549251;Dbxref=SGD:S000077079;Note=ETC8%3B Chromosome-organizing-clamp%3B tethers chromosomal regions to the nuclear periphery%3B binds TFIIIC transcription factor but does not recruit RNA Polymerase III%3B can act as a transcription-blocking insulator or as a heterochromatin barrier element%3B located between divergently transcribed genes RPB5 and CNS1;gbkey=misc_feature")
+            self.assertEqual(get_feature_name(sequence_feature), "Chromosome-organizing-clamp(misc_feature)")
+
+        with self.subTest("Test getting feature name for unknown feature"):
+            unknown_feature = Feature(seqid="chrI", source="Mock", featuretype="unknown", start=1000, end=2000, strand="+", attributes={"ID": ["unknown1"]})
+            self.assertRaises(ValueError, get_feature_name, unknown_feature)
         return
 
 if __name__ == "__main__":

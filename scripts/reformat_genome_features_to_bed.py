@@ -3,6 +3,7 @@
 import os
 import argparse
 import sys
+import re
 from typing import List, Dict
 from collections import namedtuple
 
@@ -18,35 +19,37 @@ FEATURE_TYPE_NAME_MAP = {
     "centromere": "centromere",
     "origin_of_replication": "rep_origin",
     "tRNA": "tRNA",
-    "ncRNA": "ncRNA",
-    "snoRNA": "snoRNA",
     "snRNA": "snRNA",
     "rRNA": "rRNA",
-    "SRP_RNA": "SRP_RNA",
     "pseudogene": "pseudogene",
-    "antisense_RNA": "antisense_RNA",
-    "telomerase_RNA": "telomerase_RNA",
-    "sequence_feature": "sequence_feature",
-    "mobile_genetic_element": "mobile_element",
-    "repeat_region": "repeat_region",
+    "sequence_feature": "sequence_feature",  # Highly abundant
+    "mobile_genetic_element": "mobile_element",  # Highly abundant
     "long_terminal_repeat": "LTR",
+    "ncRNA": "other_RNA",
+    "snoRNA": "other_RNA",
+    "antisense_RNA": "other_RNA",
+    "telomerase_RNA": "other_RNA",
+    "SRP_RNA": "other_RNA",
+    "RNase_P_RNA": "other_RNA",
+    "RNase_MRP_RNA": "other_RNA",
+    "regulatory_region": "regulatory_region",
 }
 SKIPPED_FEATURE_TYPES = [
     "mRNA",
-    "rRNA",
     "CDS",
     "exon",
     "intron",
     "region",
-    "transcript",
-    "RNase_P_RNA",
-    "RNase_MRP_RNA",
-    "regulatory_region",
+    "transcript"
 ]
 VALID_FEATURE_TYPES = list(FEATURE_TYPE_NAME_MAP) + SKIPPED_FEATURE_TYPES
 TMP_GFF_PATH = "tmp.gff"
 
 BUFFER_SPEC = namedtuple("BUFFER_SPEC", ["feature_name", "prefix", "sep", "length"])
+
+MGE_RE_LIST = [
+    re.compile(r"retrotransposon:(\w+)(Ty\d)-(\d+)$")
+]
 
 def get_options(args=sys.argv[1:]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -183,6 +186,21 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 def get_feature_name(feature: gffutils.Feature) -> str:
     if feature.featuretype == "gene":
         return f"{feature.id}(gene)"
+    elif feature.featuretype == "sequence_feature":
+        subtype = feature.attributes.get("gbkey")[0]
+        notes = feature.attributes.get("Note")[0].split('; ')
+        try:
+            return f"{notes[1]}({subtype})"
+        except ValueError:
+            raise ValueError(f"Unable to parse sequence feature type: {str(feature)}")
+    elif feature.featuretype == "mobile_genetic_element":
+        ft_type = feature.attributes.get("mobile_element_type", [""])[0]
+        subtype, _subtype_name = ft_type.split(":")
+        for regex in MGE_RE_LIST:
+            match = regex.match(ft_type)
+            if match:
+                return f"{match.group(2)}({subtype})"
+        raise ValueError(f"Unable to parse mobile element type: {str(feature)}")
     elif feature.featuretype in FEATURE_TYPE_NAME_MAP:
         return FEATURE_TYPE_NAME_MAP[feature.featuretype]
     raise ValueError(f"Unable to retrieve name of feature type: {feature.featuretype}")
@@ -385,7 +403,7 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB, annot_tab
         annot_table (str): Path to a BED file containing additional annotations
          that were not included in the original GFF file
     """
-    return
+    raise NotImplementedError("This function is not yet implemented")
 
 def main():
     opts = get_options()
