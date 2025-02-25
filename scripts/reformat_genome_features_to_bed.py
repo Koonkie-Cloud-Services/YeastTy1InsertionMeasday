@@ -15,6 +15,7 @@ from gffutils import create
 FEATURE_TYPE_NAME_MAP = {
     "gene": "gene",
     "telomere": "telomere",
+    "subtelomere": "subtelomere",
     "pericentromere": "pericentromere",
     "centromere": "centromere",
     "origin_of_replication": "rep_origin",
@@ -38,7 +39,6 @@ SKIPPED_FEATURE_TYPES = [
     "mRNA",
     "CDS",
     "exon",
-    "intron",
     "region",
     "transcript"
 ]
@@ -138,6 +138,7 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
     genome_skip = kwargs.get("genome_skip", ['mitochondrion', 'plasmid'])
     chrom_skip = kwargs.get("chrom_skip", ['MT'])
     feature_types_to_skip = kwargs.get("feature_types_to_skip", SKIPPED_FEATURE_TYPES)
+    chrom_skip.extend([chrom_prefix + chrom for chrom in chrom_skip])
 
     annot_features = kwargs.get("annot_features", {})
     if annot_features is None:
@@ -145,6 +146,7 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
     chrom = ""
     acc = 0
+    chrom_id_map = {}
     for ft_inst in gff_db.all_features():
         acc += 1
 
@@ -152,6 +154,7 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             # Set the chromosome name for the following features
             try:
                 chrom = ft_inst.attributes.get("Name")[0]
+                chrom_id_map[ft_inst.chrom] = chrom_prefix + chrom
             except KeyError:
                 raise ValueError(
                     f"Feature {acc}: a region must have a 'Name' attribute.\n{print(ft_inst)}"
@@ -169,7 +172,7 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
             ft_inst.chrom = chrom_prefix + chrom
             try:
-                buffer_ft = annot_features[ft_inst.id]
+                buffer_ft = annot_features.pop(ft_inst.id)
                 for ft in buffer_ft:
                     ft.chrom = chrom_prefix + chrom
                     outf.write(format_feature_as_bed(ft) + "\n")
@@ -178,6 +181,14 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             except TypeError:
                 raise TypeError(f"Feature '{ft_inst.id}' has an invalid type: {type(annot_features[ft_inst.id])}")
             outf.write(format_feature_as_bed(ft_inst) + "\n")
+
+    if annot_features:
+        for _ft_id, ft_list in annot_features.items():
+            for ft in ft_list:
+                ft.chrom = chrom_id_map[ft.chrom]
+                if ft.chrom in chrom_skip:
+                    continue
+                outf.write(format_feature_as_bed(ft) + "\n")
 
     print(f"{acc} features written to {bed_file}")
     outf.close()
@@ -189,8 +200,11 @@ def get_feature_name(feature: gffutils.Feature) -> str:
     elif feature.featuretype == "sequence_feature":
         subtype = feature.attributes.get("gbkey")[0]
         notes = feature.attributes.get("Note")[0].split('; ')
+        ft_name = notes[0]
+        if '-' in ft_name:
+            ft_name = ft_name.split('-')[0]
         try:
-            return f"{notes[1]}({subtype})"
+            return f"{ft_name}({subtype})"
         except ValueError:
             raise ValueError(f"Unable to parse sequence feature type: {str(feature)}")
     elif feature.featuretype == "mobile_genetic_element":
@@ -293,7 +307,7 @@ def create_buffered_features(gff_db: gffutils.FeatureDB,
             chrom_lengths[ft_inst.chrom] = ft_inst.stop
         if ft_inst.featuretype == buffer_feature:
             if ft_inst.strand == "+":
-                us_start = max(ft_inst.start - buffer_length, 0)
+                us_start = max(ft_inst.start - buffer_length, 1)
                 us_stop = ft_inst.start # - 1
                 ds_start = ft_inst.stop # + 1
                 ds_stop = min(ft_inst.stop + buffer_length, chrom_lengths[ft_inst.chrom])
@@ -301,7 +315,7 @@ def create_buffered_features(gff_db: gffutils.FeatureDB,
                 us_start = min(ft_inst.stop, chrom_lengths[ft_inst.chrom])
                 us_stop = ft_inst.stop + buffer_length # + 1
                 ds_start = ft_inst.start - buffer_length # - 1
-                ds_stop = max(ft_inst.start, 0)
+                ds_stop = max(ft_inst.start, 1)
             else:
                 raise ValueError(f"Feature {ft_inst.id} has an invalid strand: {ft_inst.strand}")
 
@@ -360,10 +374,27 @@ def load_buffer_feature_specifications(buffer_spec_file: str) -> Dict[str, BUFFE
 
     return buffer_specs
 
+def load_annotations_from_bed(annot_table: str) -> Dict[str, list]:
+    if not os.path.exists(annot_table):
+        raise FileNotFoundError(f"Annotation table not found: {annot_table}")
+
+    annot_dict = {}
+    i = 0
+    with open(annot_table) as fh:
+        for line in fh:
+            if line.startswith("#"):
+                continue
+
+            chrom, start, end, ft_name, strand = line.strip().split("\t")
+            annot_dict[i] = [chrom, start, end, ft_name, strand]
+            i += 1
+
+    return annot_dict
+
 
 def add_buffered_features(gff_db: gffutils.FeatureDB,
                           buffer_spec_file: str = '',
-                          **kwargs) -> None:
+                          **kwargs) -> Dict[str, List[gffutils.Feature]]:
     buffer_feature_dict = {}
     buffer_spec = kwargs.get("buffer_spec", {})
     
@@ -381,7 +412,31 @@ def add_buffered_features(gff_db: gffutils.FeatureDB,
                                                                 prefix_sep=spec.sep))
     return buffer_feature_dict
 
-def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB, annot_table: str) -> None:
+def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[str, List[gffutils.Feature]]:
+    subtelomere_features = {}
+    feature_length = kwargs.get('length', 15000)
+    for ft_inst in gff_db.all_features(featuretype='region'):
+        subtelomere_features[f"""subtelomere-{ft_inst.chrom}"""] = [
+            feature.feature_from_line(
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-1"
+            ),
+            feature.feature_from_line(
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-2"
+            ),
+            feature.feature_from_line(
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-1"
+            ),
+            feature.feature_from_line(
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-2"
+            )
+        ]
+        for subt_inst in subtelomere_features[f"""subtelomere-{ft_inst.chrom}"""]:
+            subt_inst.id = f"""subtelomere-{ft_inst.chrom}"""
+            subt_inst.featuretype = "subtelomere"
+    return subtelomere_features
+
+def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB,
+                                           annot_table: str = '') ->  Dict[str, List[gffutils.Feature]]:
     """Add user-specified annotations to the GFF database
 
     This function can be used to add non-canonical genome feature annotations
@@ -403,7 +458,52 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB, annot_tab
         annot_table (str): Path to a BED file containing additional annotations
          that were not included in the original GFF file
     """
-    raise NotImplementedError("This function is not yet implemented")
+    annot_dict = load_annotations_from_bed(annot_table)
+    new_features = {}
+
+    def _get_chromosome_names(gff_db: gffutils.FeatureDB) -> List[str]:
+        return [ft.chrom for ft in gff_db.all_features(featuretype='region')]
+    
+    def _create_feature_from_line(name: str, chrom: str, start: int, stop: int, strand: str, **kwargs) -> gffutils.Feature:
+        ft_type = kwargs.get('feature_type', '')
+        if ft_type and ft_type not in VALID_FEATURE_TYPES:
+            raise ValueError(f"Invalid feature type: {ft_type}")
+        elif ft_type != '':
+            ft_id = f"{ft_type}-{name}"
+        else:
+            ft_id = name
+
+        ft = feature.feature_from_line(
+            f"{chrom}\t.\t{name}\t{start}\t{stop}\t.\t{strand}\t.\tID={ft_id}"
+        )
+        ft.id = ft_id
+        ft.featuretype = ft_type
+        return ft
+    
+    chrom_names = _get_chromosome_names(gff_db)
+    for i, ft_coords in annot_dict.items():
+        chrom, start, stop, ft_name, strand = ft_coords
+        if chrom not in chrom_names and chrom not in ['all', 'mitochondrion']:
+            raise ValueError(f"Chromosome '{chrom}' not found in GFF file")
+
+        if chrom == 'all':
+            for chrom in chrom_names:
+                ft = _create_feature_from_line(
+                    f"{ft_name}-{i}", chrom, int(start), int(stop), strand, feature_type=ft_name
+                )
+                # gff_db.add_feature(ft)
+                try:
+                    new_features[ft.id].append(ft)
+                except KeyError:
+                    new_features[ft.id] = [ft]
+        else:
+            ft = _create_feature_from_line(ft_name, chrom, int(start), int(stop), strand)
+            # gff_db.add_feature(ft)
+            new_features[ft.id] = [ft]
+
+    new_features.update(create_subtelomere_features(gff_db))
+
+    return new_features
 
 def main():
     opts = get_options()
@@ -414,9 +514,13 @@ def main():
     print("Adding buffer regions")
     buffer_features = add_buffered_features(gff_db,
                                             opts.p_i_buffer_features)
-    # print("Adding additional annotations")
-    # annot_features = update_gff_with_additional_annotations(gff_db,
-    #                                                         annot_table=opts.p_i_annot)
+    
+    if opts.p_i_annot:
+        print("Adding additional annotations")
+        annot_features = update_gff_with_additional_annotations(gff_db,
+                                                                annot_table=opts.p_i_annot)
+        buffer_features.update(annot_features)
+
     print("Writing GFF features to BED")
     parse_gff_to_bed(gff_db,
                      opts.p_o_bed,

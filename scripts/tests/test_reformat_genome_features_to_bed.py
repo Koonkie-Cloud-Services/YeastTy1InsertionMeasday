@@ -145,12 +145,64 @@ tRNA\tupstream,downstream\t_\t500
             self.assertEqual(get_feature_name(repeat_feature), "Ty1(retrotransposon)")
 
         with self.subTest("Test getting feature name for sequence_feature"):
-            sequence_feature = feature_from_line("NC_001134.8\tRefSeq\tsequence_feature\t549229\t549251\t.\t+\t.\tID=id-NC_001134.8:549229..549251;Dbxref=SGD:S000077079;Note=ETC8%3B Chromosome-organizing-clamp%3B tethers chromosomal regions to the nuclear periphery%3B binds TFIIIC transcription factor but does not recruit RNA Polymerase III%3B can act as a transcription-blocking insulator or as a heterochromatin barrier element%3B located between divergently transcribed genes RPB5 and CNS1;gbkey=misc_feature")
-            self.assertEqual(get_feature_name(sequence_feature), "Chromosome-organizing-clamp(misc_feature)")
+            etc_feature = feature_from_line("NC_001134.8\tRefSeq\tsequence_feature\t549229\t549251\t.\t+\t.\tID=id-NC_001134.8:549229..549251;Dbxref=SGD:S000077079;Note=ETC8%3B Chromosome-organizing-clamp%3B tethers chromosomal regions to the nuclear periphery%3B binds TFIIIC transcription factor but does not recruit RNA Polymerase III%3B can act as a transcription-blocking insulator or as a heterochromatin barrier element%3B located between divergently transcribed genes RPB5 and CNS1;gbkey=misc_feature")
+            self.assertEqual(get_feature_name(etc_feature), "ETC8(misc_feature)")
+            nts_feature = feature_from_line("NC_001144.5\tRefSeq\tsequence_feature\t459797\t460711\t.\t-\t.\tID=id-NC_001144.5:459797..460711;Dbxref=SGD:S000029714;Note=NTS1-2%3B Non-transcribed region of the rDNA repeat between the 3' ETS and RDN5%3B required for rDNA repeat expansion;gbkey=misc_feature")
+            self.assertEqual(get_feature_name(nts_feature), "NTS1(misc_feature)")
 
         with self.subTest("Test getting feature name for unknown feature"):
             unknown_feature = Feature(seqid="chrI", source="Mock", featuretype="unknown", start=1000, end=2000, strand="+", attributes={"ID": ["unknown1"]})
             self.assertRaises(ValueError, get_feature_name, unknown_feature)
+
+        with self.subTest("Test getting rRNA feature name"):
+            mock_inst = feature_from_line("NC_001133.9\tMock\trRNA\t1000\t2000\t.\t+\t.\tID=rRNA1;Name=rRNA1")
+            self.assertEqual(get_feature_name(mock_inst), "rRNA(5S)")
+        return
+    
+
+    def test_update_gff_with_additional_annotations(self):
+        from reformat_genome_features_to_bed import update_gff_with_additional_annotations, create_gff_db
+        annot_table = "test_annotations.bed"
+        annot_content = """NC_001133.9\t100\t200\tcustom_feature1\t+
+NC_001133.9\t300\t400\tcustom_feature2\t-
+all\t0\t15000\tsubtelomere\t+
+all\t0\t15000\tsubtelomere\t-
+"""
+
+        with open(annot_table, 'w') as fh:
+            fh.write(annot_content.strip())
+
+        new_features = update_gff_with_additional_annotations(self.gff_db, annot_table)
+
+        self.assertEqual(len(new_features), 4)
+        self.assertIn("custom_feature1", new_features)
+        self.assertIn("custom_feature2", new_features)
+        self.assertIn("subtelomere-2", new_features)
+
+        feature3 = new_features["subtelomere-2"][0]
+        self.assertEqual(feature3.chrom, "NC_001133.9")
+        self.assertEqual(feature3.start, 0)
+        self.assertEqual(feature3.stop, 15000)
+        self.assertEqual(feature3.strand, "+")
+
+        feature3 = new_features["subtelomere-3"][0]
+        self.assertEqual(feature3.chrom, "NC_001133.9")
+        self.assertEqual(feature3.start, 0)
+        self.assertEqual(feature3.stop, 15000)
+        self.assertEqual(feature3.strand, "-")
+
+        if os.path.exists(annot_table):
+            os.remove(annot_table)
+        return
+    
+    def test_create_subtelomere_features(self):
+        from reformat_genome_features_to_bed import create_subtelomere_features
+        from gffutils import Feature
+        new_features = create_subtelomere_features(self.gff_db, length=1000)
+        self.assertEqual(len(new_features), 2)
+        self.assertIn("subtelomere-1", new_features)
+        self.assertEqual(4, len(new_features["subtelomere-1"]))
+
         return
 
 if __name__ == "__main__":

@@ -29,7 +29,8 @@ done
 python scripts/reformat_genome_features_to_bed.py \
 	--gff_in "$feature_loc_dir/Saccharomyces_cerevisiae_S288C.gff" \
 	--bed_out "$feature_loc_dir/Saccharomyces_cerevisiae_S288C.bed" \
-	--buffer_features "$input_dir/buffer_regions.tsv"
+	--buffer_features "$input_dir/buffer_regions.tsv" \
+	--annotation_table "$input_dir/custom_features.bed"
 
 # Calculate genome coverage for features
 ln -s $PWD/$input_dir $genome_cov_dir
