@@ -37,7 +37,7 @@ extract_metadata_from_library_names <- function(df) {
     return()
 }
 
-load_genome_coverage_data_frame <- function(file_path) {
+load_genome_coverage_data_frame <- function(file_path, blackout_df) {
   hm.cov_file_column_names <- c(
     "library"="V1",
     "chr"="V2",
@@ -54,8 +54,8 @@ load_genome_coverage_data_frame <- function(file_path) {
   ) %>%
     dplyr::mutate(feature.length = end - start) %>% 
     .fix_gene_names() %>%
-    filter_blackout_regions(coord_df = blackout_df) %>%
-    # dplyr::filter(feature.length > 1) %>%  # No longer necessary to remove anti-features
+    extract_metadata_from_library_names %>% 
+    filter_blackout_regions(blackout_df) %>%
     calculate_tpm(read_counts %>% 
                     dplyr::filter(norm_type == p.read_norm_type)) %>% 
     dplyr::group_by(library, feature.name) %>% 
@@ -153,12 +153,75 @@ calculate_tpm <- function(cov_df,
     return()
 }
 
-filter_blackout_regions <- function(df, coord_df) {
-  for (i in nrow(coord_df)) {
+filter_blackout_regions <- function(df, blackout_df) {
+  pre_count <- nrow(df)
+  rpc_subunits <- c("RPC34", "RPC53", "RPC160")
+  
+  # First: filter by feature coordinates
+  coord_df <- blackout_df %>% 
+    dplyr::filter(
+      !dplyr::if_any(tidyselect::everything(), is.na)
+    )
+
+  for (i in seq(nrow(coord_df))) {
     r <- coord_df[i,]
-    df <- df %>% 
-      filter(chr != r$chr | end < r$start | start > r$end)
+
+    if (r$Filter.group == "all") {
+      df <- df %>% 
+        filter(
+          chr != r$Chromosome |
+            strand != r$Strand |
+            end <= r$Start |
+            start >= r$Stop
+        )
+    } else if (r$Filter.group == "RPC") {
+      df <- df %>% 
+        filter(
+          chr != r$Chromosome |
+            strand != r$Strand |
+            end <= r$Start |
+            start >= r$Stop |
+            ! subunit %in% rpc_subunits
+        )
+    } else if (r$Filter.group %in% rpc_subunits) {
+      df <- df %>% 
+        filter(
+          chr != r$Chromosome |
+            strand != r$Strand |
+            end <= r$Start |
+            start >= r$Stop |
+            subunit != r$Filter.group
+        )
+    } else {
+      stop(paste("Unexpected Filter.group:", r$Filter.group))
+    }
   }
+  
+  # Second: use a more permissive filter, removing features by feature.name
+  name_df <- blackout_df %>% 
+    dplyr::filter(is.na(Start), is.na(Stop)) %>% 
+    dplyr::distinct(Feature, Filter.group)
+
+  for (i in seq(nrow(name_df))) {
+    r <- name_df[i,]
+    if (r$Filter.group == "all") {
+      df <- df %>% 
+        dplyr::filter(feature.name != r$Feature)
+    } else if (r$Filter.group %in% rpc_subunits) {
+      df <- df %>% 
+        dplyr::filter(feature.name != r$Feature |
+                        subunit != r$Filter.group)
+    } else if (r$Filter.group == "RPC") {
+      df <- df %>% 
+        dplyr::filter(feature.name != r$Feature |
+                        ! subunit %in% rpc_subunits)
+    } else {
+      stop(paste("Unexpected Filter.group:", r$Filter.group))
+    }
+  }
+  
+  post_count <- nrow(df)
+  message(paste(pre_count - post_count, "rows removed from genome coverage data frame."))
   return(df)
 }
 
@@ -256,7 +319,7 @@ plot_genome_coverage_heatmap <- function(cov_mat,
     cluster_columns = TRUE,
     cluster_rows = TRUE,
     border = FALSE,
-    col = viridis::viridis(100),
+    col = viridis::viridis(101),
     column_labels = meta_df[[column_labels]],
     heatmap_legend_param = hm_legend,
     clustering_distance_columns = "canberra",

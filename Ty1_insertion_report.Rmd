@@ -6,7 +6,8 @@ output:
     toc_depth: 1
     keep_md: TRUE
 params:
-  
+  data_dir: 'data'
+  output_dir: 'data/output/report'
 ---
 
 # Executive summary
@@ -37,44 +38,45 @@ library(gggenes)
 library(broom)
 library(cowplot)
 require(ComplexHeatmap)
-
-# library(reshape2)
-# library(RColorBrewer)
-# library(gridExtra)
-# library(splitstackshape)
+library(here)
 ```
 
 ```{r load-scripts}
-source("scripts/heatmap_funcs.R")
-source("scripts/butterfly_funcs.R")
+source(here("scripts", "heatmap_funcs.R"))
+source(here("scripts", "butterfly_funcs.R"))
 ```
 
 ```{r load-parameters}
 # GLOBAL
-p.data_dir <- file.path("data")
-p.library_size_file <- file.path(p.data_dir, "input", "library_size_data.xlsx")
+p.library_size_file <- here(params$data_dir, "input", "library_size_data.xlsx")
+p.custom_feature_file <- here(params$data_dir, "input", "custom_feature_annotations.xlsx")
 p.read_norm_type <- "raw"
 
 # BUTTERFLY
-p.bt.trna_cov_dir <- file.path(p.data_dir, "input", "trna_coverages")
+p.bt.trna_cov_dir <- here(params$data_dir, "input", "trna_coverages")
 p.bt.input_trna_coverage_file_names <- c(
   "upstream-negative"="all_libraries_coverage_upstream_negative_trnas_headered.tsv",
   "upstream-positive"="all_libraries_coverage_upstream_positive_trnas_headered.tsv",
   "downstream-positive"="all_libraries_coverage_downstream_positive_trnas_headered.tsv",
   "downstream-negative"="all_libraries_coverage_downstream_negative_trnas_headered.tsv"
 )
-p.bt.trna_bed_path <- file.path(p.data_dir, "output", "genome_coverage", "output", "feature_locations", "trna_regions.bed")
+p.bt.trna_bed_path <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "trna_regions.bed")
 
 # HEATMAP
-# p.hm.cov_dir <- file.path(p.data_dir, "feature_heatmapping")
+# p.hm.cov_dir <- here(params$data_dir, "feature_heatmapping")
 # p.hm.input_coverage_file_names <- c(
 #   "feature-postive"="all_positive_features.tsv",
 #   "feature-negative"="all_negative_features.tsv",
 #   "intergenic-positive"="all_positive_antifeatures.tsv",
 #   "intergenic-negative"="all_negative_antifeatures.tsv"
 # )
-p.hm.cov_file <- file.path(p.data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved.sorted.bed")
-p.hm.uniq_cov_file <- file.path(p.data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved_uniq.sorted.bed")
+p.hm.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved.sorted.bed")
+p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved_uniq.sorted.bed")
+```
+
+```{r create-output-directories}
+if (! dir.exists(params$output_dir) )
+  dir.create(params$output_dir)
 ```
 
 # Ty1 insertion quantification at tRNA genes
@@ -94,7 +96,7 @@ Loaded `r nrow(trna_df)` tRNA gene locations.
 
 ```{r load-coverage-data}
 # TEST:
-# tmp <- .load_coverage_matrix(file.path(p.data_dir, p.bt.input_trna_coverage_file_names)[4]) %>%
+# tmp <- .load_coverage_matrix(file.path(params$data_dir, p.bt.input_trna_coverage_file_names)[4]) %>%
 #   .separate_strand_and_proximity(index = names(p.bt.input_trna_coverage_file_names)[4]) %>%
 #   .add_trna_names() %>%
 #   .pivot_coverage_longer_and_aggregate()
@@ -372,14 +374,17 @@ As part of the Ty1 insertion site experiments, genes in the knock-out mutants we
 
 ```{r define-blackout-regions, tab.cap="Regions removed from the coverage tables."}
 
-blackout_df <- data.frame(
-  name = c("LEU2"),
-  chr = c("chr3"),
-  start = c(90907),
-  end = c(92894)
-)
+feature_filter_df <- readxl::read_xlsx(
+  path = p.custom_feature_file,
+  sheet = "filtering"
+) %>% 
+  dplyr::mutate(Strand = case_when(
+    Strand == "positive" ~ '+',
+    Strand == "negative" ~ '-',
+    .default = NA
+  ))
 
-blackout_df %>% 
+feature_filter_df %>% 
   knitr::kable() %>% 
   kableExtra::kable_minimal()
 
@@ -388,7 +393,8 @@ blackout_df %>%
 ## Heatmap
 
 ```{r load-heatmap-coverage-data}
-hm.cov_df <- load_genome_coverage_data_frame(p.hm.cov_file)
+hm.cov_df <- load_genome_coverage_data_frame(p.hm.cov_file,
+                                             blackout_df = feature_filter_df)
 ```
 
 ```{r check-genome-coverage-read-counts, eval=FALSE}
@@ -438,6 +444,26 @@ for (panel in unique(hm.meta_df$subunit)) {
     brewer_palette_name = c("Set1", "Set3")
   ))
 }
+```
+
+```{r write-feature-coverage-to-xlsx}
+
+writexl::write_xlsx(
+  path = here(params$output_dir, "genome_feature_coverage.xlsx"),
+  x = list(
+    "reads" = hm.cov_df %>% 
+      select(library, feature.name, read_count) %>% 
+      tidyr::pivot_wider(names_from = "library",
+                         values_from = "read_count",
+                         values_fill = 0),
+    "mean_cov" = hm.cov_df %>% 
+      select(library, feature.name, mean_cov.norm) %>% 
+      tidyr::pivot_wider(names_from = "library",
+                         values_from = "mean_cov.norm",
+                         values_fill = 0)
+  )
+)
+
 ```
 
 ## Bar-plot
@@ -605,7 +631,8 @@ The figure above shows that there is less differentiation between the different 
 ### Coverage using unique alignments
 
 ```{r plot-uniq-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library - for unambiguous alignments. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Alignments that mapped ambiguously to multiple regions were removed."}
-hm.uniq_cov_df <- load_genome_coverage_data_frame(file_path = p.hm.uniq_cov_file)
+hm.uniq_cov_df <- load_genome_coverage_data_frame(file_path = p.hm.uniq_cov_file,
+                                                  blackout_df = feature_filter_df)
 
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(

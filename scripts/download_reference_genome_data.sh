@@ -23,14 +23,14 @@ if [ ! -f $feature_file_path ]; then
 	gunzip $feature_file_path.gz
 fi
 
-if [ ! -f $genbank_file_path ]; then
-	wget \
-	--output-document $genbank_file_path.gz \
-	${ncbi_ftp_path}.gbff.gz
-
-	# Decompress
-	gunzip $genbank_file_path.gz
-fi
+# if [ ! -f $genbank_file_path ]; then
+# 	wget \
+# 	--output-document $genbank_file_path.gz \
+# 	${ncbi_ftp_path}.gbff.gz
+# 
+# 	# Decompress
+# 	gunzip $genbank_file_path.gz
+# fi
 
 # for i in $(seq -f "%02g" 1 16); do
 #   echo $i
