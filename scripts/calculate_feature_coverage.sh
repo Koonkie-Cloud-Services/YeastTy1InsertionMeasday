@@ -21,21 +21,25 @@ if [ -z "$p_bam_suffix" ]; then
 	p_bam_suffix="dupremoved_uniq.sorted"
 fi
 
+p_i_features_file=$3
+if [ ! -f "$p_i_features_file" ]; then
+	echo "ERROR: input features file '${p_i_features_file}' doesn't exist"
+	exit
+fi
+
 # Input paths
 p_i_bam_dir="$p_input_dir/BAMs"
 p_i_features_dir="$p_input_dir/feature_locations"
 p_i_sample_name_map="$p_input_dir/hiseq_sample_id_map.tsv"
-p_i_trna_locations_file="$p_input_dir/trna_regions.edited.bed"
 p_i_chr_lengths_file="$p_input_dir/chromosome_lengths.tsv"
-p_i_features_file="$p_i_features_dir/Saccharomyces_cerevisiae_S288C.bed"
+p_features_prefix=$( basename $p_i_features_file | sed 's/.bed$//g' )
 
 # Output paths
 p_o_bam_dir="$p_output_dir/BAMs"
 p_o_bed_dir="$p_output_dir/BEDs"
 p_o_features_dir="$p_output_dir/feature_locations"
-p_o_features_file="$p_o_features_dir/all_features.bed"
-p_o_trna_locations_file="$p_o_features_dir/trna_regions.bed"
-p_o_coverage_file="$p_output_dir/genome_coverage_counts_${p_bam_suffix}.bed"
+p_o_features_file="$p_o_features_dir/${p_features_prefix}_features.bed"
+p_o_coverage_file="$p_output_dir/${p_features_prefix}_coverage_${p_bam_suffix}.bed"
 
 # Intermediate file paths
 t_features_file="$p_tmp_dir/features.bed"
@@ -50,8 +54,8 @@ t_neg_anti_features_file="$p_tmp_dir/negative_anti-features.bed"
 # PARAMETER VALIDATION #
 ##                    ##
 
-if [ ! -d $working_dir ]; then
-	echo "[ERROR] working directory '$working_dir' doesn't exist"
+if [ ! -d $p_working_dir ]; then
+	echo "[ERROR] working directory '$p_working_dir' doesn't exist"
 	exit
 fi
 
@@ -83,7 +87,6 @@ done
 
 echo "[INFO] converting arabic to roman chromosome names"
 python scripts/arabic_to_roman.py $p_i_features_file $t_features_file
-python scripts/arabic_to_roman.py $p_i_trna_locations_file $p_o_trna_locations_file
 
 
 echo "[INFO] creating strand-wise feature files"
