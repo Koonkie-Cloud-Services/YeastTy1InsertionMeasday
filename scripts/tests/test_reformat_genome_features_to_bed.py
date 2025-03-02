@@ -17,7 +17,7 @@ NC_001133.9\tRefSeq\tregion\t1\t230218\t.\t+\t.\tID=NC_001133.9:1..230218;Dbxref
 NC_001133.9\tMock\ttRNA\t640\t700\t.\t+\t.\tID=tRNA1;Name=tRNA1
 NC_001133.9\tMock\tgene\t1000\t2000\t.\t+\t.\tID=gene1;Name=Gene1
 NC_001133.9\tMock\ttRNA\t3000\t4000\t.\t-\t.\tID=tRNA2;Name=tRNA2
-NC_001133.9\tMock\tlong_terminal_repeat\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1
+NC_001133.9\tMock\tlong_terminal_repeat\t5000\t6000\t.\t+\t.\tID=repeat1;Name=Repeat1;Note=Ty1 LTR;gbkey=repeat_region;rpt_type=long_terminal_repeat
 NC_001133.9\tRefSeq\tcentromere\t151465\t151582\t.\t+\t.\tID=id-NC_001133.9:151465..151582;Dbxref=SGD:S000028887;Name=CEN1;chromosome=I
 NC_001133.9\tRefSeq\tcentromere\t151465\t151474\t.\t+\t.\tID=id-NC_001133.9:151465..151474;Note=CEN1
 NC_001133.9\tRefSeq\tcentromere\t151475\t151557\t.\t+\t.\tID=id-NC_001133.9:151475..151557;Note=CEN1
@@ -28,7 +28,7 @@ NC_001224.1\tRefSeq\tgene\t731\t802\t.\t+\t.\tID=gene-tP(UGG)Q;Dbxref=GeneID:854
         self.expected_bed_content = """chrI\t640\t700\ttRNA\t+
 chrI\t1000\t2000\tgene1(gene)\t+
 chrI\t3000\t4000\ttRNA\t-
-chrI\t5000\t6000\tLTR\t+
+chrI\t5000\t6000\tTy1(LTR)\t+
 """
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content.strip())
@@ -84,7 +84,7 @@ chrI\t5000\t6000\tLTR\t+
         self.assertIsInstance(res['tRNA1'][0], Feature)
         for feature in res['tRNA1']:
             if feature.id == 'tRNA1_upstream':
-                self.assertEqual(0, feature.start)
+                self.assertEqual(1, feature.start)
                 self.assertEqual(640, feature.end)
             if feature.id == 'tRNA1_downstream':
                 self.assertEqual(700, feature.start)
@@ -154,9 +154,13 @@ tRNA\tupstream,downstream\t_\t500
             unknown_feature = Feature(seqid="chrI", source="Mock", featuretype="unknown", start=1000, end=2000, strand="+", attributes={"ID": ["unknown1"]})
             self.assertRaises(ValueError, get_feature_name, unknown_feature)
 
+        with self.subTest("Test parsing Ty1 element information from LTR feature"):
+            feature_inst = feature_from_line("NC_001133.9\tRefSeq\tlong_terminal_repeat\t22230\t22552\t.\t+\t.\tID=id-NC_001133.9:22230..22552;Dbxref=SGD:S000006787;Note=Ty1 LTR;gbkey=repeat_region;rpt_type=long_terminal_repeat")
+            self.assertEqual(get_feature_name(feature_inst), "Ty1(LTR)")
+
         with self.subTest("Test getting rRNA feature name"):
-            mock_inst = feature_from_line("NC_001133.9\tMock\trRNA\t1000\t2000\t.\t+\t.\tID=rRNA1;Name=rRNA1")
-            self.assertEqual(get_feature_name(mock_inst), "rRNA(5S)")
+            mock_inst = feature_from_line("NC_001144.5\tRefSeq\trRNA\t459676\t459796\t.\t+\t.\tID=rna-NR_132215.1;Parent=gene-YNCL0018W;Dbxref=SGD:S000006479,GeneID:9164945,GenBank:NR_132215.1;Name=NR_132215.1;gbkey=rRNA;gene=RDN5-1;locus_tag=YNCL0018W;orig_transcript_id=gnl|WGS:|mrna.YNCL0018W-RA;product=5S ribosomal RNA;transcript_id=NR_132215.1")
+            self.assertEqual(get_feature_name(mock_inst), "5S rRNA")
         return
     
 
@@ -165,8 +169,6 @@ tRNA\tupstream,downstream\t_\t500
         annot_table = "test_annotations.bed"
         annot_content = """NC_001133.9\t100\t200\tcustom_feature1\t+
 NC_001133.9\t300\t400\tcustom_feature2\t-
-all\t0\t15000\tsubtelomere\t+
-all\t0\t15000\tsubtelomere\t-
 """
 
         with open(annot_table, 'w') as fh:
@@ -177,19 +179,19 @@ all\t0\t15000\tsubtelomere\t-
         self.assertEqual(len(new_features), 4)
         self.assertIn("custom_feature1", new_features)
         self.assertIn("custom_feature2", new_features)
-        self.assertIn("subtelomere-2", new_features)
+        self.assertIn("subtelomere-NC_001133.9", new_features)
 
-        feature3 = new_features["subtelomere-2"][0]
+        feature3 = new_features["subtelomere-NC_001133.9"][0]
         self.assertEqual(feature3.chrom, "NC_001133.9")
-        self.assertEqual(feature3.start, 0)
+        self.assertEqual(feature3.start, 1)
         self.assertEqual(feature3.stop, 15000)
         self.assertEqual(feature3.strand, "+")
 
-        feature3 = new_features["subtelomere-3"][0]
-        self.assertEqual(feature3.chrom, "NC_001133.9")
-        self.assertEqual(feature3.start, 0)
-        self.assertEqual(feature3.stop, 15000)
-        self.assertEqual(feature3.strand, "-")
+        feature3 = new_features["subtelomere-NC_001224.1"][1]
+        self.assertEqual(feature3.chrom, "NC_001224.1")
+        self.assertEqual(feature3.start, 70779)
+        self.assertEqual(feature3.stop, 85779)
+        self.assertEqual(feature3.strand, "+")
 
         if os.path.exists(annot_table):
             os.remove(annot_table)
@@ -200,8 +202,8 @@ all\t0\t15000\tsubtelomere\t-
         from gffutils import Feature
         new_features = create_subtelomere_features(self.gff_db, length=1000)
         self.assertEqual(len(new_features), 2)
-        self.assertIn("subtelomere-1", new_features)
-        self.assertEqual(4, len(new_features["subtelomere-1"]))
+        self.assertIn("subtelomere-NC_001133.9", new_features)
+        self.assertEqual(4, len(new_features["subtelomere-NC_001133.9"]))
 
         return
 

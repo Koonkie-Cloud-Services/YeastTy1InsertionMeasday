@@ -215,6 +215,20 @@ def get_feature_name(feature: gffutils.Feature) -> str:
             if match:
                 return f"{match.group(2)}({subtype})"
         raise ValueError(f"Unable to parse mobile element type: {str(feature)}")
+    elif feature.featuretype == "long_terminal_repeat":
+        subtype = feature.attributes.get("Note")[0]
+        regex = re.compile(r'(.*) LTR')
+        if regex.match(subtype):
+            return f"{regex.match(subtype).group(1)}(LTR)"
+        else:
+            return subtype
+    elif feature.featuretype == "rRNA":
+        subtype = feature.attributes.get("product")[0]
+        regex = re.compile(r"(\d+S) ribosomal RNA")
+        if regex.match(subtype):
+            return f"{regex.match(subtype).group(1)} rRNA"
+        else:
+            return subtype
     elif feature.featuretype in FEATURE_TYPE_NAME_MAP:
         return FEATURE_TYPE_NAME_MAP[feature.featuretype]
     raise ValueError(f"Unable to retrieve name of feature type: {feature.featuretype}")
@@ -416,22 +430,22 @@ def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[st
     subtelomere_features = {}
     feature_length = kwargs.get('length', 15000)
     for ft_inst in gff_db.all_features(featuretype='region'):
-        subtelomere_features[f"""subtelomere-{ft_inst.chrom}"""] = [
+        subtelomere_features[f"subtelomere-{ft_inst.chrom}"] = [
             feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-1"
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length - 1}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-1"
             ),
             feature.feature_from_line(
                 f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-2"
             ),
             feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-1"
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length - 1}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-1"
             ),
             feature.feature_from_line(
                 f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-2"
             )
         ]
-        for subt_inst in subtelomere_features[f"""subtelomere-{ft_inst.chrom}"""]:
-            subt_inst.id = f"""subtelomere-{ft_inst.chrom}"""
+        for subt_inst in subtelomere_features[f"subtelomere-{ft_inst.chrom}"]:
+            subt_inst.id = f"subtelomere-{ft_inst.chrom}"
             subt_inst.featuretype = "subtelomere"
     return subtelomere_features
 
