@@ -206,6 +206,18 @@ NC_001133.9\t300\t400\tcustom_feature2\t-
         self.assertEqual(4, len(new_features["subtelomere-NC_001133.9"]))
 
         return
+    
+    def test_main(self):
+        from reformat_genome_features_to_bed import main
+        main(
+            ["--gff_in",
+             "../data/output/feature_locations/Saccharomyces_cerevisiae_S288C.gff",
+             "--bed_out", 
+             "tests/test_output.bed",
+             "--buffer_features",
+             "../data/input/buffer_regions.tsv"]
+        )
+        return
 
 if __name__ == "__main__":
     unittest.main()

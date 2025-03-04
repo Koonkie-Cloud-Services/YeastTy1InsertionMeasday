@@ -27,7 +27,7 @@ FEATURE_TYPE_NAME_MAP = {
     "mobile_genetic_element": "mobile_element",  # Highly abundant
     "long_terminal_repeat": "LTR",
     "ncRNA": "other_RNA",
-    "snoRNA": "other_RNA",
+    "snoRNA": "snoRNA",
     "antisense_RNA": "other_RNA",
     "telomerase_RNA": "other_RNA",
     "SRP_RNA": "other_RNA",
@@ -360,11 +360,11 @@ def create_buffered_features(gff_db: gffutils.FeatureDB,
 
     return new_features
 
-def load_buffer_feature_specifications(buffer_spec_file: str) -> Dict[str, BUFFER_SPEC]:
+def load_buffer_feature_specifications(buffer_spec_file: str) -> List[BUFFER_SPEC]:
     if not os.path.exists(buffer_spec_file):
         raise FileNotFoundError(f"Buffer specification file not found: {buffer_spec_file}")
     
-    buffer_specs = {}
+    buffer_specs = []
 
     with open(buffer_spec_file, "r") as f:
             for line in f:
@@ -377,12 +377,12 @@ def load_buffer_feature_specifications(buffer_spec_file: str) -> Dict[str, BUFFE
                     raise ValueError(f"Invalid buffer specification: {line}")
 
                 try:
-                    buffer_specs[ft_name] = BUFFER_SPEC(
+                    buffer_specs.append(BUFFER_SPEC(
                         feature_name=ft_name,
                         prefix=prefix.split(','),
                         sep=prefix_sep,
                         length=int(length)
-                        )
+                        ))
                 except ValueError:
                     raise ValueError(f"Unable to use feature buffer specification:\n{line}\n")
 
@@ -410,20 +410,25 @@ def add_buffered_features(gff_db: gffutils.FeatureDB,
                           buffer_spec_file: str = '',
                           **kwargs) -> Dict[str, List[gffutils.Feature]]:
     buffer_feature_dict = {}
-    buffer_spec = kwargs.get("buffer_spec", {})
+    buffer_specs = kwargs.get("buffer_spec", {})
     
-    if not buffer_spec:  
+    if not buffer_specs:  
         if not buffer_spec_file:
             return
 
-        buffer_spec = load_buffer_feature_specifications(buffer_spec_file)
+        buffer_specs = load_buffer_feature_specifications(buffer_spec_file)
     
-    for _ft_name, spec in buffer_spec.items():
-            buffer_feature_dict.update(create_buffered_features(gff_db,
-                                                                buffer_feature=spec.feature_name,
-                                                                buffer_length=spec.length,
-                                                                prefixes=spec.prefix,
-                                                                prefix_sep=spec.sep))
+    for spec in buffer_specs:
+            buffers = create_buffered_features(gff_db,
+                                               buffer_feature=spec.feature_name,
+                                               buffer_length=spec.length,
+                                               prefixes=spec.prefix,
+                                               prefix_sep=spec.sep)
+            for ft_id, ft_list in buffers.items():
+                try:
+                    buffer_feature_dict[ft_id].extend(ft_list)
+                except KeyError:
+                    buffer_feature_dict[ft_id] = ft_list
     return buffer_feature_dict
 
 def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[str, List[gffutils.Feature]]:
@@ -519,8 +524,8 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB,
 
     return new_features
 
-def main():
-    opts = get_options()
+def main(args=None):
+    opts = get_options(args)
     print("Loading GFF into database")
     gff_db = create_gff_db(opts.p_i_gff)
     print("Merging redundant features")
