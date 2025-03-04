@@ -509,7 +509,15 @@ writexl::write_xlsx(
       select(library, feature.name, mean_cov.norm) %>% 
       tidyr::pivot_wider(names_from = "library",
                          values_from = "mean_cov.norm",
-                         values_fill = 0)
+                         values_fill = 0),
+    "feature_summary" = hm.full_cov_df %>%
+      distinct(feature.name, chr, start, end, feature.length) %>%
+      group_by(feature.name) %>%
+      dplyr::summarise(count = n(),
+                       total_length = sum(feature.length),
+                       mean_length = round(mean(feature.length)),
+                       min_length = min(feature.length),
+                       max_length = max(feature.length))
   )
 )
 
