@@ -60,7 +60,7 @@ p.bt.input_trna_coverage_file_names <- c(
   "downstream-positive"="all_libraries_coverage_downstream_positive_trnas_headered.tsv",
   "downstream-negative"="all_libraries_coverage_downstream_negative_trnas_headered.tsv"
 )
-p.bt.trna_bed_path <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "trna_regions.bed")
+p.bt.trna_bed_path <- here(params$data_dir, "output", "feature_locations", "trna_regions.bed")
 
 # HEATMAP
 # p.hm.cov_dir <- here(params$data_dir, "feature_heatmapping")
@@ -70,8 +70,8 @@ p.bt.trna_bed_path <- here(params$data_dir, "output", "genome_coverage", "output
 #   "intergenic-positive"="all_positive_antifeatures.tsv",
 #   "intergenic-negative"="all_negative_antifeatures.tsv"
 # )
-p.hm.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved.sorted.bed")
-p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "genome_coverage_counts_dupremoved_uniq.sorted.bed")
+p.hm.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved.sorted.bed")
+p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved_uniq.sorted.bed")
 ```
 
 ```{r create-output-directories}
@@ -202,27 +202,58 @@ bt.cov_df %>%
 The smoothing function (LOESS) greatly effects the shape and of coverage distributions in the butterfly plot. The LOESS function (default) had the best fit, with the formula `y ~ x`.
 The `span` and `length` parameters used by `geom_smooth` also impacted the fit of the model. In order to preserve the double peak of Ty1 insertion per nucleosome the span was set to `r p.span` and level was set to `r p.level`.
 
-## Box-and-whisker plot
+## Insertion rate differences between strands
+
+### Box-and-whisker plot
 
 Next, we wanted to learn whether there was a difference in Ty1 insertion between the positive and negative strands.
 
-```{r strand-difference-box-and-whisker, fig.cap="Comparison of normalised read depths between the positive and negative strands.", fig.height=3, fig.width=4}
+```{r strand-wise-box-and-whisker, fig.cap="Comparison of normalised read depths between the positive and negative strands.", fig.height=6, fig.width=8}
 
-bt.cov_df %>%
-  group_by(library, trna.name, proximity, strand) %>%
+bt.strand_diff_df <- bt.cov_df %>%
+  group_by(group, library, trna.name, proximity, strand, subunit, strain.type, sugar) %>%
   mutate(strand = ifelse(strand == '+',
                          "positive",
                          "negative")) %>% 
-  reframe(coverage.sum = sum(coverage.norm)) %>% 
+  reframe(coverage.sum = sum(coverage.norm))
+
+bt.strand_diff_df %>% 
   ggplot(aes(x = strand, y = coverage.sum, colour = proximity)) +
   geom_boxplot() +
+  facet_grid(rows = vars(subunit),
+             cols = vars(strain.type))+ 
   labs(x = "DNA strand",
        y = "Normalised read depth") +
   guides(colour = guide_legend(title = "")) +
   theme_bw()
 ```
 
-There is no difference between the two strands.
+There is no significant difference between the two strands. Coverage upstream of tRNA genes is clearly greater than downstream.
+
+### Strand insertion at each tRNA gene
+
+```{r strand-difference-box-and-whisker, fig.cap="Coverage difference values were calculated by subtracting the coverage of the negative strand from the coverage of the positive strand for each tRNA gene."}
+
+bt.strand_diff_df %>% 
+  pivot_wider(names_from = "strand",
+              values_from = "coverage.sum",
+              values_fill = 0) %>% 
+  mutate(strand_diff = positive - negative) %>%
+  ggplot2::ggplot(aes(x = group,
+                      y = strand_diff,
+                      colour = interaction(strain.type, sugar, sep = '+'))) +
+  ggplot2::geom_boxplot() +
+  ggplot2::facet_grid(rows = vars(subunit),
+                      scales = "free_y",
+                      space = "free") +
+  ggplot2::scale_colour_brewer(palette = "Dark2") +
+  ggplot2::guides(colour = guide_legend(title = "Treatment")) +
+  ggplot2::coord_flip() +
+  ggplot2::labs(x = "",
+                y = "Difference between positive and negative\nstrand coverage at tRNA genes") +
+  ggplot2::theme_bw()
+
+```
 
 ## Mutant versus wild-type
 
@@ -392,10 +423,28 @@ feature_filter_df %>%
 
 ## Heatmap
 
-```{r load-heatmap-coverage-data}
-hm.cov_df <- load_genome_coverage_data_frame(p.hm.cov_file,
-                                             blackout_df = feature_filter_df)
+```{r aggregate-feature-neighbourhoods}
+feature_neighbourhood_list <- readxl::read_xlsx(
+  path = p.custom_feature_file,
+  sheet = "feature_neighbourhoods",
+  col_names = c("feature.name")
+) %>% 
+  dplyr::pull("feature.name")
+
 ```
+
+```{r load-heatmap-coverage-data}
+hm.full_cov_df <- load_genome_coverage_data_frame(
+  p.hm.cov_file,
+  blackout_df = feature_filter_df,
+  neighbourhoods = feature_neighbourhood_list
+)
+
+hm.cov_df <- hm.full_cov_df %>% 
+  summarise_coverage_by_feature(library, feature.name)
+```
+
+The coverage values of the upstream and downstream of the following features were aggregated.
 
 ```{r check-genome-coverage-read-counts, eval=FALSE}
 hm.cov_df %>% 
@@ -506,12 +555,41 @@ low_cov_features <- hm.cov_df %>%
   dplyr::group_by(feature.name) %>% 
   dplyr::reframe(median_cov = median(mean_cov.norm)) %>% 
   dplyr::arrange(median_cov) %>% 
-  dplyr::filter(median_cov < 2E-3) %>% 
+  dplyr::filter(median_cov < 5E-3) %>% 
   dplyr::pull(feature.name)
 
 plot_feature_coverage_bars(
   df = hm.cov_df,
   feature_names = low_cov_features)
+```
+
+## tRNA genes
+
+```{r subset-tRNA-features-from-coverage-data}
+hm.trna_cov_df <- hm.full_cov_df %>%
+  filter(feature.name == 'tRNA') %>%
+  dplyr::left_join(trna_df,
+                   by = c("chr", "end", "strand")) %>% 
+  dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
+                                 replacement = '\\1',
+                                 x = trna.name)) %>% 
+  summarise_coverage_by_feature(library, trna.name)
+  
+```
+
+```{r plot-trna-coverage-heatmap}
+draw(plot_genome_coverage_heatmap(
+    cov_mat = hm.trna_cov_df %>% 
+      dplyr::select(tidyselect::all_of(c("library", "trna.name", "vals"="mean_cov.norm"))) %>% 
+      tidyr::pivot_wider(names_from = "trna.name",
+                         values_from = "vals",
+                         values_fill = 0) %>% 
+      tibble::column_to_rownames("library") %>%
+      t(),
+    meta_df = hm.meta_df,
+    annotations = c("strain.type", "sugar", "subunit"),
+    brewer_palette_name = c("Set1", "Set3", "Dark2")
+  ))
 ```
 
 # Appendix
@@ -632,7 +710,9 @@ The figure above shows that there is less differentiation between the different 
 
 ```{r plot-uniq-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library - for unambiguous alignments. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Alignments that mapped ambiguously to multiple regions were removed."}
 hm.uniq_cov_df <- load_genome_coverage_data_frame(file_path = p.hm.uniq_cov_file,
-                                                  blackout_df = feature_filter_df)
+                                                  blackout_df = feature_filter_df,
+                                                  neighbourhoods = feature_neighbourhood_list) %>%
+  summarise_coverage_by_feature(library, feature.name)
 
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(

@@ -37,7 +37,23 @@ extract_metadata_from_library_names <- function(df) {
     return()
 }
 
-load_genome_coverage_data_frame <- function(file_path, blackout_df) {
+summarise_coverage_by_feature <- function(df, ...) {
+  df %>% 
+    dplyr::group_by(...) %>% 
+    dplyr::reframe(
+      read_count = sum(coverage),
+      sum_cov = sum(coverage.pbp),
+      mean_cov = mean(coverage.pbp),
+      mean_cov.norm = mean(coverage.pbp.norm),
+      sd_cov.norm = sd(coverage.pbp.norm),
+      mean_tpm = mean(tpm)
+    ) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::arrange(...) %>% 
+    return()
+}
+
+load_genome_coverage_data_frame <- function(file_path, blackout_df, neighbourhoods) {
   hm.cov_file_column_names <- c(
     "library"="V1",
     "chr"="V2",
@@ -54,19 +70,11 @@ load_genome_coverage_data_frame <- function(file_path, blackout_df) {
   ) %>%
     dplyr::mutate(feature.length = end - start) %>% 
     .fix_gene_names() %>%
+    aggregate_neighbourhood_coverage(ft_list = neighbourhoods) %>% 
     extract_metadata_from_library_names %>% 
     filter_blackout_regions(blackout_df) %>%
     calculate_tpm(read_counts %>% 
-                    dplyr::filter(norm_type == p.read_norm_type)) %>% 
-    dplyr::group_by(library, feature.name) %>% 
-    dplyr::reframe(
-      read_count = sum(coverage),
-      sum_cov = sum(coverage.pbp),
-      mean_cov = mean(coverage.pbp),
-      mean_cov.norm = mean(coverage.pbp.norm),
-      sd_cov.norm = sd(coverage.pbp.norm),
-      mean_tpm = mean(tpm)
-    ) %>% 
+                    dplyr::filter(norm_type == p.read_norm_type)) %>%
     dplyr::ungroup() %>% 
     dplyr::arrange(library, feature.name) %>% 
     return()
@@ -153,6 +161,26 @@ calculate_tpm <- function(cov_df,
     return()
 }
 
+aggregate_neighbourhood_coverage <- function(df, ft_list) {
+  neighbourhood_pattern <- paste(
+    '.*(', paste(ft_list, collapse='|'), ').*',
+    collapse = '', sep = ''
+  )
+
+  df %>% 
+    dplyr::mutate(
+      feature.name = dplyr::case_when(
+        feature.name %in% ft_list ~ feature.name,
+        feature.name == "pericentromere" ~ feature.name, # TODO: improve this hotfix
+        grepl(pattern = neighbourhood_pattern, x = feature.name) ~ gsub(pattern = neighbourhood_pattern, x = feature.name, replacement = "\\1 neighbourhood"),
+        .default = feature.name
+      )
+    ) %>% 
+    dplyr::group_by(library, feature.name, gene.name, chr, start, end, strand, feature.length) %>% 
+    dplyr::reframe(coverage = sum(coverage)) %>% 
+    return()
+}
+
 filter_blackout_regions <- function(df, blackout_df) {
   pre_count <- nrow(df)
   rpc_subunits <- c("RPC34", "RPC53", "RPC160")
@@ -221,7 +249,9 @@ filter_blackout_regions <- function(df, blackout_df) {
   }
   
   post_count <- nrow(df)
-  message(paste(pre_count - post_count, "rows removed from genome coverage data frame."))
+  message(
+    paste(pre_count - post_count, "blackout rows removed from genome coverage data frame.")
+  )
   return(df)
 }
 
@@ -319,7 +349,7 @@ plot_genome_coverage_heatmap <- function(cov_mat,
     cluster_columns = TRUE,
     cluster_rows = TRUE,
     border = FALSE,
-    col = viridis::viridis(101),
+    col = viridis::viridis(length(unique(cov_mat)) + 5),
     column_labels = meta_df[[column_labels]],
     heatmap_legend_param = hm_legend,
     clustering_distance_columns = "canberra",
