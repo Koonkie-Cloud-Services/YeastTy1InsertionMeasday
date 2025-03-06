@@ -61,14 +61,14 @@ chrI\t5000\t6000\tTy1(LTR)\t+
         self.assertEqual(1, self.gff_db.count_features_of_type("centromere"))
         return
 
-    def test_add_buffered_features(self):
-        from reformat_genome_features_to_bed import add_buffered_features, remove_redundant_features, BUFFER_SPEC
-        remove_redundant_features(self.gff_db)
+    def test_get_buffer_specification_index(self):
+        from reformat_genome_features_to_bed import get_buffer_specification_index, BUFFER_SPEC
         test_buffer = BUFFER_SPEC(feature_name="centromere", length=1000, prefix=["peri"], sep="")
-        res = add_buffered_features(self.gff_db, buffer_spec = {"centromere": test_buffer})
+        res = get_buffer_specification_index(buffer_spec = [test_buffer])
         for ft_id, features in res.items():
-            self.assertEqual(2, len(features))
-        
+            self.assertEqual(ft_id, "centromere")
+            self.assertEqual(1, len(features))
+
         # # TODO: Add features directly to GFF database
         # self.assertEqual(13, self.gff_db.count_features_of_type())
         return
@@ -117,10 +117,10 @@ tRNA\tupstream,downstream\t_\t500
 
         buffer_specs = load_buffer_feature_specifications(buffer_spec_file)
 
-        expected_specs = {
-            "centromere": BUFFER_SPEC(feature_name="centromere", prefix=["peri"], sep="", length=1000),
-            "tRNA": BUFFER_SPEC(feature_name="tRNA", prefix=["upstream", "downstream"], sep="_", length=500)
-        }
+        expected_specs = [
+            BUFFER_SPEC(feature_name="centromere", prefix=["peri"], sep="", length=1000),
+            BUFFER_SPEC(feature_name="tRNA", prefix=["upstream", "downstream"], sep="_", length=500)
+        ]
 
         self.assertEqual(buffer_specs, expected_specs)
 

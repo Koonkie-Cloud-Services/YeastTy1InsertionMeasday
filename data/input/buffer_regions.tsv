@@ -1,5 +1,5 @@
 #feature_name	prefix	prefix_sep	length
 centromere	peri		50000
-centromere	upstream,downstream		500
+centromere	upstream,downstream	 	500
 tRNA	upstream,downstream	_	1000
-origin_of_replication	upstream,downstream	_	500
+origin_of_replication	upstream,downstream	 	500

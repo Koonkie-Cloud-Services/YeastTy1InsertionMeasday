@@ -18,7 +18,7 @@ FEATURE_TYPE_NAME_MAP = {
     "subtelomere": "subtelomere",
     "pericentromere": "pericentromere",
     "centromere": "centromere",
-    "origin_of_replication": "rep_origin",
+    "origin_of_replication": "origin_of_replication",
     "tRNA": "tRNA",
     "snRNA": "snRNA",
     "rRNA": "rRNA",
@@ -42,7 +42,8 @@ SKIPPED_FEATURE_TYPES = [
     "region",
     "transcript"
 ]
-VALID_FEATURE_TYPES = list(FEATURE_TYPE_NAME_MAP) + SKIPPED_FEATURE_TYPES
+VALID_FEATURE_TYPES = set(FEATURE_TYPE_NAME_MAP)
+VALID_FEATURE_TYPES.update(set(SKIPPED_FEATURE_TYPES))
 TMP_GFF_PATH = "tmp.gff"
 
 BUFFER_SPEC = namedtuple("BUFFER_SPEC", ["feature_name", "prefix", "sep", "length"])
@@ -126,7 +127,7 @@ def format_feature_as_bed(feature: gffutils.Feature) -> str:
         feature.chrom,
         feature.start,
         feature.stop,
-        get_feature_name(feature),
+        feature.id,
         feature.strand
     ]
     return "\t".join([str(i) for i in bed_row])
@@ -144,9 +145,12 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
     if annot_features is None:
         annot_features = {}
 
+    buffer_spec_index = kwargs.get("buffer_spec_index", {})
+
     chrom = ""
     acc = 0
     chrom_id_map = {}
+    chrom_lengths = {}
     for ft_inst in gff_db.all_features():
         acc += 1
 
@@ -155,6 +159,7 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             try:
                 chrom = ft_inst.attributes.get("Name")[0]
                 chrom_id_map[ft_inst.chrom] = chrom_prefix + chrom
+                chrom_lengths[chrom_prefix + chrom] = ft_inst.stop
             except KeyError:
                 raise ValueError(
                     f"Feature {acc}: a region must have a 'Name' attribute.\n{print(ft_inst)}"
@@ -170,12 +175,15 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             if chrom == "":
                 raise AssertionError(f"No chromosome found for feature '{ft_inst.seqid}'.")
 
+            ft_inst.id = get_feature_name(ft_inst)
             ft_inst.chrom = chrom_prefix + chrom
             try:
-                buffer_ft = annot_features.pop(ft_inst.id)
-                for ft in buffer_ft:
-                    ft.chrom = chrom_prefix + chrom
-                    outf.write(format_feature_as_bed(ft) + "\n")
+                for spec in buffer_spec_index[ft_inst.id]:
+                    for bf in create_buffered_features(ft_inst,
+                                                       buffer_spec=spec,
+                                                       chrom_lengths=chrom_lengths):
+                        bf.chrom = chrom_prefix + chrom
+                        outf.write(format_feature_as_bed(bf) + "\n")
             except KeyError:
                 pass
             except TypeError:
@@ -281,10 +289,9 @@ def write_features_to_file(features: List[gffutils.Feature], out_file: str = '')
             
     return out_file
 
-def create_buffered_features(gff_db: gffutils.FeatureDB,
-                             buffer_feature: str,
-                             buffer_length = 1000,
-                             **kwargs) -> Dict[str, List[gffutils.Feature]]:
+def create_buffered_features(ft_inst: gffutils.Feature,
+                             buffer_spec: BUFFER_SPEC = None,
+                             **kwargs) -> List[gffutils.Feature]:
     """Add upstream and downstream buffer regions to the GFF database
 
     Args:
@@ -295,11 +302,25 @@ def create_buffered_features(gff_db: gffutils.FeatureDB,
     Raises:
         ValueError: If a feature has an invalid strand
     """
-    new_features = {}
-    chrom_lengths = {}
+    new_features = []
+    chrom_lengths = kwargs.get("chrom_lengths", {})
 
-    prefixes = kwargs.get('prefixes', ['upstream', 'downstream'])
-    prefix_sep = kwargs.get('prefix_sep', '_')
+    # Load the lengths of the chromosomes if not provided
+    if len(chrom_lengths) == 0:
+        gff_db = kwargs.get("gff_db")
+        for ft in gff_db.all_features(featuretype='region'):
+            chrom_lengths[ft.chrom] = ft.stop
+
+    if buffer_spec:
+        prefixes = buffer_spec.prefix
+        prefix_sep = buffer_spec.sep
+        buffer_feature = buffer_spec.feature_name
+        buffer_length = buffer_spec.length
+    else:
+        prefixes = kwargs.get('prefixes', ['upstream', 'downstream'])
+        prefix_sep = kwargs.get('prefix_sep', '_')
+        buffer_feature = kwargs.get("buffer_feature")
+        buffer_length = kwargs.get("buffer_length")
 
     if type(prefixes) is str:
         raise AssertionError("Buffer prefix must be a list of length 1 or 2")
@@ -312,40 +333,30 @@ def create_buffered_features(gff_db: gffutils.FeatureDB,
         raise ValueError("Buffer prefix must be a list of length 1 or 2")
 
     for i in prefixes:
-        VALID_FEATURE_TYPES.append(f"{i}{prefix_sep}{buffer_feature}")
+        VALID_FEATURE_TYPES.add(f"{i}{prefix_sep}{buffer_feature}")
         FEATURE_TYPE_NAME_MAP[f"{i}{prefix_sep}{buffer_feature}"] = f"{i}{prefix_sep}{buffer_feature}"
 
-    for ft_inst in gff_db.all_features():
-        if ft_inst.featuretype == "region":
-            # get chromosome length
-            chrom_lengths[ft_inst.chrom] = ft_inst.stop
-        if ft_inst.featuretype == buffer_feature:
-            if ft_inst.strand == "+":
-                us_start = max(ft_inst.start - buffer_length, 1)
-                us_stop = ft_inst.start # - 1
-                ds_start = ft_inst.stop # + 1
-                ds_stop = min(ft_inst.stop + buffer_length, chrom_lengths[ft_inst.chrom])
-            elif ft_inst.strand == "-":
-                us_start = min(ft_inst.stop, chrom_lengths[ft_inst.chrom])
-                us_stop = ft_inst.stop + buffer_length # + 1
-                ds_start = ft_inst.start - buffer_length # - 1
-                ds_stop = max(ft_inst.start, 1)
-            else:
-                raise ValueError(f"Feature {ft_inst.id} has an invalid strand: {ft_inst.strand}")
+    if ft_inst.strand == "+":
+        us_start = max(ft_inst.start - buffer_length, 1)
+        us_stop = ft_inst.start # - 1
+        ds_start = ft_inst.stop # + 1
+        ds_stop = min(ft_inst.stop + buffer_length, chrom_lengths[ft_inst.chrom])
+    elif ft_inst.strand == "-":
+        us_start = min(ft_inst.stop, chrom_lengths[ft_inst.chrom])
+        us_stop = ft_inst.stop + buffer_length # + 1
+        ds_start = ft_inst.start - buffer_length # - 1
+        ds_stop = max(ft_inst.start, 1)
+    else:
+        raise ValueError(f"Feature {ft_inst.id} has an invalid strand: {ft_inst.strand}")
 
-            for prefix, coords in zip(prefixes, [[us_start, us_stop], [ds_start, ds_stop]]):
-                ft_type = f"{prefix}{prefix_sep}{ft_inst.featuretype}"
-                ft_id = f"{ft_inst.id}{prefix_sep}{prefix}"
-                buff_feat = feature.feature_from_line(
-                        f"{ft_inst.chrom}\t{ft_inst.source}\t{ft_type}\t{coords[0]}\t{coords[1]}\t.\t{ft_inst.strand}\t.\tID={ft_id}"
-                    )
-                buff_feat.id = ft_id
-                try:
-                    new_features[ft_inst.id].append(buff_feat)
-                except KeyError:
-                    new_features[ft_inst.id] = [buff_feat]
-        else:
-            pass
+    for prefix, coords in zip(prefixes, [[us_start, us_stop], [ds_start, ds_stop]]):
+        ft_type = f"{prefix}{prefix_sep}{ft_inst.featuretype}"
+        ft_id = f"{ft_inst.id}{prefix_sep}{prefix}"
+        buff_feat = feature.feature_from_line(
+                f"{ft_inst.chrom}\t{ft_inst.source}\t{ft_type}\t{coords[0]}\t{coords[1]}\t.\t{ft_inst.strand}\t.\tID={ft_id}"
+            )
+        buff_feat.id = ft_id
+        new_features.append(buff_feat)
     
     # Add the new features to the GFF database
     # NOTE: COULD NOT GET THIS TO WORK
@@ -406,10 +417,9 @@ def load_annotations_from_bed(annot_table: str) -> Dict[str, list]:
     return annot_dict
 
 
-def add_buffered_features(gff_db: gffutils.FeatureDB,
-                          buffer_spec_file: str = '',
-                          **kwargs) -> Dict[str, List[gffutils.Feature]]:
-    buffer_feature_dict = {}
+def get_buffer_specification_index(buffer_spec_file: str = '',
+                                   **kwargs) -> Dict[str, List[BUFFER_SPEC]]:
+    buffer_spec_dict = {}
     buffer_specs = kwargs.get("buffer_spec", {})
     
     if not buffer_specs:  
@@ -419,17 +429,11 @@ def add_buffered_features(gff_db: gffutils.FeatureDB,
         buffer_specs = load_buffer_feature_specifications(buffer_spec_file)
     
     for spec in buffer_specs:
-            buffers = create_buffered_features(gff_db,
-                                               buffer_feature=spec.feature_name,
-                                               buffer_length=spec.length,
-                                               prefixes=spec.prefix,
-                                               prefix_sep=spec.sep)
-            for ft_id, ft_list in buffers.items():
-                try:
-                    buffer_feature_dict[ft_id].extend(ft_list)
-                except KeyError:
-                    buffer_feature_dict[ft_id] = ft_list
-    return buffer_feature_dict
+            try:
+                buffer_spec_dict[spec.feature_name].append(spec)
+            except KeyError:
+                buffer_spec_dict[spec.feature_name] = [spec]
+    return buffer_spec_dict
 
 def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[str, List[gffutils.Feature]]:
     subtelomere_features = {}
@@ -477,7 +481,6 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB,
         annot_table (str): Path to a BED file containing additional annotations
          that were not included in the original GFF file
     """
-    annot_dict = load_annotations_from_bed(annot_table)
     new_features = {}
 
     def _get_chromosome_names(gff_db: gffutils.FeatureDB) -> List[str]:
@@ -498,6 +501,11 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB,
         ft.id = ft_id
         ft.featuretype = ft_type
         return ft
+    
+    if annot_table:
+        annot_dict = load_annotations_from_bed(annot_table)
+    else:
+        annot_dict = {}
     
     chrom_names = _get_chromosome_names(gff_db)
     for i, ft_coords in annot_dict.items():
@@ -520,8 +528,6 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB,
             # gff_db.add_feature(ft)
             new_features[ft.id] = [ft]
 
-    new_features.update(create_subtelomere_features(gff_db))
-
     return new_features
 
 def main(args=None):
@@ -531,19 +537,18 @@ def main(args=None):
     print("Merging redundant features")
     remove_redundant_features(gff_db)
     print("Adding buffer regions")
-    buffer_features = add_buffered_features(gff_db,
-                                            opts.p_i_buffer_features)
+    buffer_features = get_buffer_specification_index(opts.p_i_buffer_features)
     
-    if opts.p_i_annot:
-        print("Adding additional annotations")
-        annot_features = update_gff_with_additional_annotations(gff_db,
-                                                                annot_table=opts.p_i_annot)
-        buffer_features.update(annot_features)
+    print("Adding additional annotations")
+    annot_features = update_gff_with_additional_annotations(gff_db,
+                                                            annot_table=opts.p_i_annot)
+    annot_features.update(create_subtelomere_features(gff_db))
 
     print("Writing GFF features to BED")
     parse_gff_to_bed(gff_db,
                      opts.p_o_bed,
-                     annot_features=buffer_features)
+                     annot_features=annot_features,
+                     buffer_spec_index=buffer_features)
     return
 
 
