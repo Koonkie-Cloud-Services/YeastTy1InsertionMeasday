@@ -133,11 +133,14 @@ plot_butterfly <- function(df,
                            annot_df,
                            span = 0.75,
                            level = 0.95,
+                           colour_by = library,
+                           colour_palette = NULL,
                            nucleosome_shape = "circle",
                            .annot_width = 70,
                            .annot_height = NULL,
                            .annot_size = 3,
-                           .smooth_se = FALSE) {
+                           .smooth_se = FALSE,
+                           .linewidth = 0.5) {
   
   plt <- df %>%
     mutate(
@@ -182,18 +185,29 @@ plot_butterfly <- function(df,
       )
   } else
     stop(paste("Unexpected nucleosome shape:", nucleosome_shape))
-  plt + 
+  plt <- plt +
     ggplot2::geom_smooth(
       ggplot2::aes(x = rel.position,
                    y = coverage.norm,
-                   group = interaction(library, proximity, strand),
-                   colour = library),
-      method="loess",
+                   group = interaction(library, proximity, strand)),
+      colour = "black",
+      method = "loess",
       formula = y ~ x,
       span = span,
       se = .smooth_se,
       level = level,
-      linewidth = 0.5) +
+      linewidth = .linewidth * 2) + 
+    ggplot2::geom_smooth(
+      ggplot2::aes(x = rel.position,
+                   y = coverage.norm,
+                   group = interaction(library, proximity, strand),
+                   colour = {{colour_by}}),
+      method = "loess",
+      formula = y ~ x,
+      span = span,
+      se = .smooth_se,
+      level = level,
+      linewidth = .linewidth) +
     xlab("Relative position from TSS (bp)") +
     ylab("Normalized 5'-most nucleotide coverage") +
     ggplot2::facet_wrap(~subunit, scales = "fixed") +
@@ -213,7 +227,7 @@ plot_butterfly <- function(df,
                                           xmax = xmax,
                                           forward = forward,
                                           y = y)) +
-    guides(color = guide_legend(title = "Sample",
+    guides(color = guide_legend(title = "Library",
                                 override.aes = list(linewidth = 2),
                                 ncol = 1)) +
     theme(
@@ -224,6 +238,12 @@ plot_butterfly <- function(df,
       panel.grid.minor = element_line(colour="gray", linewidth = 0.1),
       panel.background = element_blank(), 
       axis.line = element_line(colour = "gray")
-    ) %>% 
-    return()
+    )
+  
+  if (!is.null(colour_palette)) {
+    plt <- plt +
+      scale_colour_manual(values = colour_palette)
+  }
+  
+  return(plt)
 }

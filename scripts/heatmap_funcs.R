@@ -170,7 +170,7 @@ aggregate_neighbourhood_coverage <- function(df, ft_list) {
   df %>% 
     dplyr::mutate(
       feature.name = dplyr::case_when(
-        feature.name %in% ft_list ~ feature.name,
+        # feature.name %in% ft_list ~ feature.name,
         feature.name == "pericentromere" ~ feature.name, # TODO: improve this hotfix
         grepl(pattern = neighbourhood_pattern, x = feature.name) ~ gsub(pattern = neighbourhood_pattern, x = feature.name, replacement = "\\1 neighbourhood"),
         .default = feature.name
