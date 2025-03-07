@@ -161,6 +161,11 @@ tRNA\tupstream,downstream\t_\t500
         with self.subTest("Test getting rRNA feature name"):
             mock_inst = feature_from_line("NC_001144.5\tRefSeq\trRNA\t459676\t459796\t.\t+\t.\tID=rna-NR_132215.1;Parent=gene-YNCL0018W;Dbxref=SGD:S000006479,GeneID:9164945,GenBank:NR_132215.1;Name=NR_132215.1;gbkey=rRNA;gene=RDN5-1;locus_tag=YNCL0018W;orig_transcript_id=gnl|WGS:|mrna.YNCL0018W-RA;product=5S ribosomal RNA;transcript_id=NR_132215.1")
             self.assertEqual(get_feature_name(mock_inst), "5S rRNA")
+
+        with self.subTest("Test renaming feature by index"):
+            mock_inst = feature_from_line("NC_001148.4\tRefSeq\tgene\t794965\t795767\t.\t+\t.\tID=gene-YPR132W;Dbxref=GeneID:856250;Name=RPS23B;end_range=795767,.;gbkey=Gene;gene=RPS23B;gene_biotype=protein_coding;locus_tag=YPR132W;partial=true;start_range=.,794965")
+            self.assertEqual(get_feature_name(mock_inst, name_index={"gene-YPR132W": "RPL"}), "RPL")
+            
         return
     
 

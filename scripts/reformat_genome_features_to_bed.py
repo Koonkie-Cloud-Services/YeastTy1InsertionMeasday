@@ -175,7 +175,7 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             if chrom == "":
                 raise AssertionError(f"No chromosome found for feature '{ft_inst.seqid}'.")
 
-            ft_inst.id = get_feature_name(ft_inst)
+            ft_inst.id = get_feature_name(ft_inst, **kwargs)
             ft_inst.chrom = chrom_prefix + chrom
             try:
                 for spec in buffer_spec_index[ft_inst.id]:
@@ -202,9 +202,13 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
     outf.close()
     return
 
-def get_feature_name(feature: gffutils.Feature) -> str:
+def get_feature_name(feature: gffutils.Feature, **kwargs) -> str:
     if feature.featuretype == "gene":
-        return f"{feature.id}(gene)"
+        try:
+            gene_name = feature.attributes.get("ID")[0]
+            return kwargs.get("name_index", {})[gene_name]
+        except KeyError:
+            return f"{feature.id}(gene)"
     elif feature.featuretype == "sequence_feature":
         subtype = feature.attributes.get("gbkey")[0]
         notes = feature.attributes.get("Note")[0].split('; ')
@@ -288,6 +292,31 @@ def write_features_to_file(features: List[gffutils.Feature], out_file: str = '')
                 outf.write("\n")
             
     return out_file
+
+def get_ribosomal_protein_genes(gff_db: gffutils.FeatureDB, subunit_index: Dict[int, str] = None) -> Dict[str, str]:
+    gene_name_lookup = {}
+    rps_regex = re.compile(r'ribosomal (\d+)S subunit protein (\w+)')
+    if subunit_index is None:
+        subunit_index = {
+            40: 'S',
+            60: 'L'
+        }
+    for ft in gff_db.all_features(featuretype='mRNA'):
+        parent_gene = ft.attributes.get("Parent")[0]
+        try:
+            product = ft.attributes.get("product")[0]
+        except TypeError:
+            continue
+
+        match = rps_regex.match(product)
+        if match:
+            try:
+                subunit = subunit_index[int(match.group(1))]
+            except KeyError:
+                raise KeyError(f"Invalid ribosomal subunit: {match.group(1)}")
+            gene_name_lookup[parent_gene] = f"RP{subunit}"
+    return gene_name_lookup
+
 
 def create_buffered_features(ft_inst: gffutils.Feature,
                              buffer_spec: BUFFER_SPEC = None,
@@ -544,11 +573,14 @@ def main(args=None):
                                                             annot_table=opts.p_i_annot)
     annot_features.update(create_subtelomere_features(gff_db))
 
+    gene_name_lookup = get_ribosomal_protein_genes(gff_db)
+
     print("Writing GFF features to BED")
     parse_gff_to_bed(gff_db,
                      opts.p_o_bed,
                      annot_features=annot_features,
-                     buffer_spec_index=buffer_features)
+                     buffer_spec_index=buffer_features,
+                     name_index=gene_name_lookup)
     return
 
 
