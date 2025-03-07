@@ -192,11 +192,12 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
     if annot_features:
         for _ft_id, ft_list in annot_features.items():
-            for ft in ft_list:
-                ft.chrom = chrom_id_map[ft.chrom]
-                if ft.chrom in chrom_skip:
+            for ft_inst in ft_list:
+                ft_inst.id = get_feature_name(ft_inst)
+                ft_inst.chrom = chrom_id_map[ft_inst.chrom]
+                if ft_inst.chrom in chrom_skip:
                     continue
-                outf.write(format_feature_as_bed(ft) + "\n")
+                outf.write(format_feature_as_bed(ft_inst) + "\n")
 
     print(f"{acc} features written to {bed_file}")
     outf.close()

@@ -201,17 +201,19 @@ NC_001133.9\t300\t400\tcustom_feature2\t-
         if os.path.exists(annot_table):
             os.remove(annot_table)
         return
-    
+
     def test_create_subtelomere_features(self):
         from reformat_genome_features_to_bed import create_subtelomere_features
-        from gffutils import Feature
         new_features = create_subtelomere_features(self.gff_db, length=1000)
         self.assertEqual(len(new_features), 2)
         self.assertIn("subtelomere-NC_001133.9", new_features)
         self.assertEqual(4, len(new_features["subtelomere-NC_001133.9"]))
+        for _ft_name, ft_inst in new_features.items():
+            for ft in ft_inst:
+                self.assertEqual(ft.featuretype, "subtelomere")
 
         return
-    
+
     def test_main(self):
         from reformat_genome_features_to_bed import main
         main(
