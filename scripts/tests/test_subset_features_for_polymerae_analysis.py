@@ -16,14 +16,27 @@ class Tester(unittest.TestCase):
     
     def test_main(self):
         from subset_features_for_polymerase_analysis import main
-        main([
-        "--bed_in",
-        "../data/output/feature_locations/Saccharomyces_cerevisiae_S288C.bed",
-        "--xlsx_in",
-        "../data/input/custom_feature_annotations.xlsx",
-        "--sheet_name",
-        "polymerase_analysis",
-        "--bed_out_prefix",
-        self.test_bed_out_prefix])
+
+        # with self.subTest("Subsetting features from BED file"):
+        #     main([
+        #     "--bed_in",
+        #     "../data/output/feature_locations/Saccharomyces_cerevisiae_S288C.bed",
+        #     "--xlsx_in",
+        #     "../data/input/custom_feature_annotations.xlsx",
+        #     "--sheet_name",
+        #     "polymerase_analysis",
+        #     "--bed_out_prefix",
+        #     self.test_bed_out_prefix])
+
+        with self.subTest("Subsetting features from GFF file"):
+            main([
+            "--gff_in",
+            "../data/output/feature_locations/Saccharomyces_cerevisiae_S288C.gff",
+            "--xlsx_in",
+            "../data/input/custom_feature_annotations.xlsx",
+            "--sheet_name",
+            "polymerase_analysis",
+            "--bed_out_prefix",
+            self.test_bed_out_prefix])
         return
     
