@@ -36,7 +36,7 @@ python scripts/reformat_genome_features_to_bed.py \
 	--buffer_features "$input_dir/buffer_regions.tsv"
 
 python scripts/subset_features_for_polymerase_analysis.py \
-	--bed_in "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed" \
+	--gff_in "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.gff" \
 	--xlsx_in "${input_dir}/custom_feature_annotations.xlsx" \
 	--bed_out_prefix "${p_o_features_dir}/polymerase_analysis" \
 	--buffer_length_bp 1000 \
@@ -52,6 +52,8 @@ ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 # Calculate coverage of features used in polymerase analysis
 ./scripts/calculate_feature_coverage.sh \
 	$p_o_coverage_dir "dupremoved.sorted" "${p_o_features_dir}/polymerase_analysis.RNA_Pol_3.bed"
+./scripts/calculate_position_coverage.sh \
+	$p_o_coverage_dir "${p_o_features_dir}/polymerase_analysis.RNA_Pol_2.bed" "dupremoved.sorted"
 unlink $p_o_coverage_dir/$( basename $input_dir)
 
 # Render the RMarkdown report to create figures

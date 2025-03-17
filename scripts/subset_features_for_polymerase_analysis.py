@@ -9,6 +9,7 @@ from gffutils import Feature as gff_Feature
 
 from reformat_genome_features_to_bed import create_gff_db
 from reformat_genome_features_to_bed import BUFFER_SPEC
+from reformat_genome_features_to_bed import format_feature_as_bed
 
 
 class Feature(gff_Feature):
@@ -33,7 +34,7 @@ class Feature(gff_Feature):
     
         return
 
-    def __str__(self):
+    def to_bed(self):
         return f"{self.seqid}\t{self.start}\t{self.end}\t{self.featuretype}\t{self.strand}"
 
     def has_coordinates(self) -> bool:
@@ -160,16 +161,30 @@ def load_target_feature_info(
             target_features[row["RNA.Polymerase"]] = [feature]
     return target_features
 
+def build_chrom_id_index(gff_db: FeatureDB) -> Dict[str, str]:
+    chrom_id_map = {}
+    chrom_prefix = "chr"
+    for ft_inst in gff_db.all_features(featuretype="region"):
+        try:
+            chrom = ft_inst.attributes.get("Name")[0]
+            chrom_id_map[ft_inst.chrom] = chrom_prefix + chrom
+        except KeyError:
+            raise ValueError(
+                f"Region feature must have a 'Name' attribute.\n{print(ft_inst)}"
+            )
+    return chrom_id_map
 
 def match_features_in_db(
     feature_db: FeatureDB | gff_FeatureDB, features_in: List[Feature]
 ) -> List[Feature]:
     features_out = []
+    chrom_id_map = build_chrom_id_index(feature_db)
     for feature in features_in:
         if feature.has_coordinates():
             features_out.append(feature)
         else:
             for db_feat in feature_db.all_features(featuretype=feature.featuretype):
+                db_feat.seqid = chrom_id_map.get(db_feat.seqid)
                 if len(feature.attributes):
                     for attr_name, attr_value in feature.attributes.items():
                         if db_feat.attributes.get(attr_name)[0] == attr_value:
@@ -225,11 +240,17 @@ def buffer_features(features_in: List[Feature],
         features_out.extend([us_feat, feature, ds_feat])
     return features_out
 
+def get_feature_id(feature: Feature) -> str:
+    return feature.featuretype
 
 def write_features_to_bed_file(p_o_bed: str, features_in: List[Feature]) -> None:
     with open(p_o_bed, "w") as f:
         for feature in features_in:
-            f.write(f"{str(feature)}\n")
+            feature.id = get_feature_id(feature)
+            try:
+                f.write(f"{feature.to_bed()}\n")
+            except AttributeError:
+                f.write(f"{format_feature_as_bed(feature)}\n")
     return
 
 
