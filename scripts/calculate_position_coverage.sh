@@ -1,0 +1,147 @@
+#!/bin/bash
+
+if [ "$#" -lt 1 ]; then
+    echo "ERROR: unexpected number of arguments provided"
+    echo -e "USAGE:\n$0 <working directory> <features BED> [BAM suffix]"
+    exit
+fi
+
+##                          ##
+# DEFINE ANALYSIS PARAMETERS #
+##                          ##
+# Define directory paths
+p_working_dir=$1
+p_input_dir="$p_working_dir/input"
+p_output_dir="$p_working_dir/output"
+p_tmp_dir="$p_working_dir/.tmp"
+
+# Analysis parameters
+p_i_features_file=$2
+if [ ! -f "$p_i_features_file" ]; then
+	echo "ERROR: input features file '${p_i_features_file}' doesn't exist"
+	exit
+fi
+
+p_bam_suffix=$3
+if [ -z "$p_bam_suffix" ]; then
+	p_bam_suffix="dupremoved_uniq.sorted"
+fi
+
+# Input paths
+p_i_bam_dir="$p_input_dir/BAMs"
+p_i_features_dir="$p_input_dir/feature_locations"
+p_i_sample_name_map="$p_input_dir/hiseq_sample_id_map.tsv"
+p_i_chr_lengths_file="$p_input_dir/chromosome_lengths.tsv"
+p_features_prefix=$( basename $p_i_features_file | sed 's/.bed$//g' )
+
+# Output paths
+p_o_bam_dir="$p_output_dir/BAMs"
+p_o_bed_dir="$p_output_dir/BEDs"
+p_o_features_dir="$p_output_dir/feature_locations"
+p_o_features_file="$p_o_features_dir/${p_features_prefix}_features.bed"
+p_o_coverage_file="$p_output_dir/${p_features_prefix}_coverage_${p_bam_suffix}.bed"
+
+# Intermediate file paths
+t_features_file="$p_tmp_dir/features.bed"
+t_pos_features_file="$p_tmp_dir/positive_features.bed"
+t_neg_features_file="$p_tmp_dir/negative_features.bed"
+
+
+##                    ##
+# PARAMETER VALIDATION #
+##                    ##
+
+if [ ! -d $p_working_dir ]; then
+	echo "[ERROR] working directory '$p_working_dir' doesn't exist"
+	exit
+fi
+
+if [ ! -d $p_input_dir ]; then
+	echo "[ERROR] input directory '$p_input_dir' doesn't exist"
+	exit
+fi
+
+if [ -f $p_o_coverage_file ]; then
+	echo "[WARNING] removing output file '$p_o_coverage_file'"
+	rm $p_o_coverage_file
+        touch $p_o_coverage_file
+fi
+
+if [ -d $p_tmp_dir ]; then
+	rm -r $p_tmp_dir
+fi
+
+for dir_path in $p_output_dir $p_tmp_dir $p_o_bed_dir $p_o_bam_dir $p_o_features_dir
+do
+	if [ ! -d $dir_path ]; then
+		mkdir $dir_path
+	fi
+done
+
+##              ##
+# BEGIN ANALYSIS #
+##              ##
+
+echo "[INFO] converting arabic to roman chromosome names"
+python scripts/arabic_to_roman.py $p_i_features_file $p_o_features_file
+
+while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName || [ -n "$fastqName" ]
+do
+	# Skip the header line
+	if [[ $sampleId == "sampleId" ]]; then
+		continue
+	fi
+
+	# Define file paths for sample
+	old_bam="${p_i_bam_dir}/${prefix}_${p_bam_suffix}.bam"
+	new_bam_path="${p_o_bam_dir}/${uniqueId}_${p_bam_suffix}.bam"
+	bed_path="${p_o_bed_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"
+
+	if [ ! -f $old_bam ]; then
+		echo "[ERROR] Unable to find input BAM file '$old_bam'"
+		exit
+	fi
+
+	echo "[INFO] Renaming $uniqueId BAM: '$old_bam'"
+	cp $old_bam $new_bam_path
+
+	if [ -f $bed_path ]; then
+		rm $bed_path
+	fi
+	touch $bed_path
+
+	echo "[INFO] calculating feature coverage for sample: $uniqueId"
+	# positive-features
+	bedtools bamtobed -i $new_bam_path | \
+		grep '\+$'  | \
+		bedtools coverage \
+		-a $t_pos_features_file \
+		-b - \
+		-d \
+		-g $p_i_chr_lengths_file \
+		-sorted \
+		>> $bed_path
+
+	# negative-features
+	bedtools bamtobed -i $new_bam_path | \
+		grep '\-$'  | \
+		bedtools coverage \
+		-a $t_neg_features_file \
+		-b - \
+		-d \
+		-g $p_i_chr_lengths_file \
+		-sorted \
+		>> $bed_path
+
+	# Write to the output file path
+	echo "[INFO] sorting and concatenating BED file '$bed_path'"
+	bedtools sort -g $p_i_chr_lengths_file -i $bed_path | \
+		awk -v id="$uniqueId" '{ OFS="\t"; print id,$0 }' >> \
+		$p_o_coverage_file
+done<$p_i_sample_name_map
+
+
+# TODO: summarise number of reads in BAMs and BEDs
+
+echo "[INFO] Genome coverage information written to '$p_o_coverage_file'"
+echo "[INFO] Workflow completed"
