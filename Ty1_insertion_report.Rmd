@@ -39,6 +39,7 @@ library(broom)
 library(cowplot)
 require(ComplexHeatmap)
 library(here)
+require(ggbreak)
 ```
 
 ```{r load-scripts}
@@ -660,8 +661,7 @@ rp2.cov_df %>%
   dplyr::mutate(
     rel_position = dplyr::row_number() - buffer_length_bp,
     max_position = max(rel_position),
-    gene_length = max_position - buffer_length_bp,
-  ) %>% 
+    gene_length = max_position - buffer_length_bp) %>% 
   dplyr::filter(
     rel_position <= buffer_length_bp |
       rel_position > (gene_length - buffer_length_bp)
@@ -685,6 +685,7 @@ rp2.cov_df %>%
                     y = max(rp2.cov_df$coverage),
                     label = "TTS") +
   ggplot2::scale_x_continuous(breaks = c(buffer_length_bp * -1, 0, buffer_length_bp)) +
+  ggbreak::scale_x_break(c(buffer_length_bp, buffer_length_bp)) +
   labs(x = "",
        y = "Mean number of\nTy1 insertions (coverage)") +
   theme_bw() +
