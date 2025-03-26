@@ -72,7 +72,7 @@ p.bt.trna_bed_path <- here(params$data_dir, "output", "feature_locations", "trna
 # )
 p.hm.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved.sorted.bed")
 p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved_uniq.sorted.bed")
-p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_3_coverage_dupremoved.sorted.bed")
+p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_2_coverage_dupremoved.sorted.bed")
 ```
 
 ```{r create-output-directories}
@@ -596,7 +596,8 @@ hm.trna_cov_df <- hm.full_cov_df %>%
   dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
                                  replacement = '\\1',
                                  x = trna.name)) %>% 
-  summarise_coverage_by_feature(library, trna.name)
+  summarise_coverage_by_feature(library, trna.name) %>% 
+  dplyr::filter(trna.name != "tX")
   
 ```
 
@@ -623,9 +624,74 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 # Coverage at genes transcribed by RNA Polymerase II
 
-__Coming shortly__
+```{r load-rna-pol-ii-table, eval=FALSE}
+# rp2.cov_df <- readr::read_tsv(file=p.rpii.cov_file)
+```
 
-```{r load-rna-pol-ii-table}
+```{r test-rna-pol-ii-table, eval=TRUE}
+row_count <- 6000
+
+replicate_items <- function(items, total_count) {
+  is.wholenumber <- function(n)
+    return(round(n) == n)
+
+  frac <- total_count / length(items)
+  if (!is.wholenumber(frac))
+    stop(
+      paste("total_count is not divisible by number of items:", frac)
+    )
+  unlist(lapply(items, rep.int, frac))
+}
+
+rp2.cov_df <- data.frame(
+  seqid = replicate_items(c('chr1'), row_count),
+  strand = replicate_items(c('+'), row_count),
+  position = seq.int(from = 1000, length.out = row_count),
+  coverage = round(rnorm(row_count, mean = 3, sd = 3)),
+  feature = replicate_items(c('gene1', 'gene2', 'gene3'), row_count)
+  )
+
+```
+
+```{r plot-absolute-position-coverage}
+buffer_length_bp <- 500
+rp2.cov_df %>% 
+  dplyr::group_by(seqid, strand, feature) %>% 
+  dplyr::mutate(
+    rel_position = dplyr::row_number() - buffer_length_bp,
+    max_position = max(rel_position),
+    gene_length = max_position - buffer_length_bp,
+  ) %>% 
+  dplyr::filter(
+    rel_position <= buffer_length_bp |
+      rel_position > (gene_length - buffer_length_bp)
+  ) %>%
+  # dplyr::group_by(rel_position) %>% 
+  # dplyr::reframe(coverage = mean(coverage)) %>%
+  ggplot(aes(x = rel_position, y = coverage)) +
+  # ggplot2::geom_line() +
+  geom_smooth(se = FALSE) +
+  ggplot2::geom_vline(xintercept = 1,
+                      linetype = "dashed") +
+  ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
+                      linetype = "dashed") +
+  coord_cartesian(ylim = c(0, max(rp2.cov_df$coverage)),
+                  clip = 'off') +
+  ggplot2::annotate("text",
+                    x = 1,
+                    y = max(rp2.cov_df$coverage),
+                    label = "TSS") +
+  ggplot2::geom_text(aes(x = max(rel_position) - buffer_length_bp),
+                    y = max(rp2.cov_df$coverage),
+                    label = "TTS") +
+  ggplot2::scale_x_continuous(breaks = c(buffer_length_bp * -1, 0, buffer_length_bp)) +
+  labs(x = "",
+       y = "Mean number of\nTy1 insertions (coverage)") +
+  theme_bw() +
+  theme(plot.margin = unit(c(2,1,1,1), "lines"))
+```
+
+```{r plot-relative-position-coverage}
 
 ```
 
