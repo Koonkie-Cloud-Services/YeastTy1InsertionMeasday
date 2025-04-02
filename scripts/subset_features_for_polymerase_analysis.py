@@ -16,6 +16,7 @@ class Feature(gff_Feature):
     def __init__(
         self,
         featuretype: str,
+        id: str = "",
         seqid: str = ".",
         start: int = -1,
         end: int = -1,
@@ -27,6 +28,7 @@ class Feature(gff_Feature):
         self.end = int(end)
         self.featuretype = str(featuretype)
         self.strand = str(strand)
+        self.id = id
         self.attributes = {}
 
         if len(kwargs) > 0:
@@ -215,7 +217,13 @@ def load_buffer_specs(p_i_xlsx: str,
 
 
 def buffer_features(features_in: List[Feature],
-                    buffer_specs: Dict[str, BUFFER_SPEC]) -> List[Feature]:
+                    buffer_specs: Dict[str, BUFFER_SPEC],
+                    **kwargs) -> List[Feature]:
+    
+    buffer_prefix = kwargs.get("buffer_prefix", ["upstream", "downstream"])
+    buffer_sep = kwargs.get("buffer_sep", " ")
+    buffer_feature_attr = kwargs.get("buffer_feature_attr", "featuretype")
+
     features_out = []
     for feature in features_in:
         buffer_spec = buffer_specs.get(feature.featuretype)
@@ -223,15 +231,23 @@ def buffer_features(features_in: List[Feature],
             features_out.append(feature)
             continue
 
+        try:
+            attr = feature.__getattribute__(buffer_feature_attr)
+        except AttributeError as e:
+            raise ValueError(
+                f"Feature {feature} does not have the attribute {buffer_feature_attr}\n{e}"
+            )
         us_feat = Feature(
-            featuretype=f"upstream {feature.featuretype}",
+            id=f"{buffer_prefix[0]}{buffer_sep}{attr}",
+            featuretype=attr,    
             seqid=feature.seqid,
             start=max(feature.start - buffer_spec.length, 1),
             end=feature.start,
             strand=feature.strand,
         )
         ds_feat = Feature(
-            featuretype=f"downstream {feature.featuretype}",
+            id=f"{buffer_prefix[1]}{buffer_sep}{attr}",
+            featuretype=attr,
             seqid=feature.seqid,
             start=feature.end,
             end=feature.end + buffer_spec.length,
@@ -240,13 +256,15 @@ def buffer_features(features_in: List[Feature],
         features_out.extend([us_feat, feature, ds_feat])
     return features_out
 
-def get_feature_id(feature: Feature) -> str:
-    return feature.featuretype
-
-def write_features_to_bed_file(p_o_bed: str, features_in: List[Feature]) -> None:
+def write_features_to_bed_file(p_o_bed: str, features_in: List[Feature], **kwargs) -> None:
+    chrom_prefix = kwargs.get("chrom_prefix", "chr")
+    chrom_skip = kwargs.get("chrom_skip", ['MT'])
+    chrom_skip.extend([chrom_prefix + chrom for chrom in chrom_skip])
     with open(p_o_bed, "w") as f:
         for feature in features_in:
-            feature.id = get_feature_id(feature)
+            if feature.seqid in chrom_skip:
+                continue
+
             try:
                 f.write(f"{feature.to_bed()}\n")
             except AttributeError:
@@ -272,7 +290,14 @@ def main(args=None):
     for rna_pol, feature_set in target_features.items():
         output_bed_path = get_bed_file_name(opts.p_o_bed_prefix, rna_pol)
         feature_set = match_features_in_db(feature_db, feature_set)
-        feature_set = buffer_features(feature_set, buffer_specs)
+        if rna_pol == 3:
+            feature_set = buffer_features(feature_set, buffer_specs)
+        else:
+            feature_set = buffer_features(feature_set,
+                                          buffer_specs,
+                                          buffer_feature_attr="id",
+                                          buffer_prefix=["", ""],
+                                          buffer_sep="")
         write_features_to_bed_file(output_bed_path, feature_set)
     return
 

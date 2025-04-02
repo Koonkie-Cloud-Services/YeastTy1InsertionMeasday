@@ -3,7 +3,9 @@ import unittest
 
 class Tester(unittest.TestCase):
     def setUp(self):
-        self.test_bed_out_prefix = "tests/test_out"
+        self.test_bed_out_prefix = "tests/results/test_out"
+        if not os.path.exists(os.path.dirname(self.test_bed_out_prefix)):
+            os.makedirs(os.path.dirname(self.test_bed_out_prefix))
         return
     
     def tearDown(self):
