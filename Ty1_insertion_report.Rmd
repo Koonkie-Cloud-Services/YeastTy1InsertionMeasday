@@ -74,6 +74,7 @@ p.bt.trna_bed_path <- here(params$data_dir, "output", "feature_locations", "trna
 p.hm.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved.sorted.bed")
 p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved_uniq.sorted.bed")
 p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_2_coverage_dupremoved.sorted.bed")
+p.rpii.feature_bed_file <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "polymerase_analysis.RNA_Pol_2_features.bed")
 ```
 
 ```{r create-output-directories}
@@ -625,11 +626,20 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 # Coverage at genes transcribed by RNA Polymerase II
 
-```{r load-rna-pol-ii-table, eval=FALSE}
-# rp2.cov_df <- readr::read_tsv(file=p.rpii.cov_file)
+```{r load-rna-pol-ii-table, eval=TRUE}
+rpii.cov_df <- readr::read_tsv(file=p.rpii.cov_file,
+                              col_names = c("library", "seqid", "position", "strand", "feature", "coverage"))
+
+rpii.gene_df <- readr::read_tsv(file=p.rpii.feature_bed_file,
+                               col_names = c("seqid", "start", "stop", "feature", "strand")) %>% 
+  group_by(feature) %>% 
+  mutate(id = row_number()) %>% 
+  filter(id == 2) %>% # Grab just the true coordinates of the gene. 1 & 3 correspond to buffer regions.
+  select(feature, start, stop) %>% 
+  mutate(length = stop - start)
 ```
 
-```{r test-rna-pol-ii-table, eval=TRUE}
+```{r test-rna-pol-ii-table, eval=FALSE}
 row_count <- 6000
 
 replicate_items <- function(items, total_count) {
@@ -644,7 +654,7 @@ replicate_items <- function(items, total_count) {
   unlist(lapply(items, rep.int, frac))
 }
 
-rp2.cov_df <- data.frame(
+rpii.cov_df <- data.frame(
   seqid = replicate_items(c('chr1'), row_count),
   strand = replicate_items(c('+'), row_count),
   position = seq.int(from = 1000, length.out = row_count),
@@ -654,38 +664,57 @@ rp2.cov_df <- data.frame(
 
 ```
 
-```{r plot-absolute-position-coverage}
+```{r prepare-rpii-coverage-dataframe}
 buffer_length_bp <- 500
-rp2.cov_df %>% 
-  dplyr::group_by(seqid, strand, feature) %>% 
-  dplyr::mutate(
-    rel_position = dplyr::row_number() - buffer_length_bp,
-    max_position = max(rel_position),
-    gene_length = max_position - buffer_length_bp) %>% 
-  dplyr::filter(
-    rel_position <= buffer_length_bp |
-      rel_position > (gene_length - buffer_length_bp)
-  ) %>%
-  # dplyr::group_by(rel_position) %>% 
-  # dplyr::reframe(coverage = mean(coverage)) %>%
+min_feature_length <- buffer_length_bp * 2
+
+prep_position_wise_feature_coverage_df <- function(df, gene_df) {
+  feature_list <- gene_df %>% 
+    filter(length >= min_feature_length) %>% 
+    pull(feature)
+  
+  df %>%
+    filter(
+      coverage > 0,
+      feature %in% feature_list
+    ) %>%
+    left_join(gene_df) %>% 
+    mutate(rel_position = case_when(
+      start + buffer_length_bp > position ~ position - start,
+      stop - buffer_length_bp < position ~ position - stop + (2 * buffer_length_bp),
+      .default = NA)) %>%
+    dplyr::filter(
+      !is.na(rel_position)
+    ) %>%
+    select(seqid, rel_position, strand, feature, coverage) %>%
+    return()
+}
+```
+
+```{r plot-absolute-position-coverage}
+rpii.cov_df %>% 
+  prep_position_wise_feature_coverage_df(rpii.gene_df) %>% # View()
   ggplot(aes(x = rel_position, y = coverage)) +
-  # ggplot2::geom_line() +
   geom_smooth(se = FALSE) +
   ggplot2::geom_vline(xintercept = 1,
                       linetype = "dashed") +
   ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
                       linetype = "dashed") +
-  coord_cartesian(ylim = c(0, max(rp2.cov_df$coverage)),
-                  clip = 'off') +
+  coord_cartesian(clip = 'off') +
   ggplot2::annotate("text",
                     x = 1,
-                    y = max(rp2.cov_df$coverage),
+                    y = 2 * 1.02,
                     label = "TSS") +
   ggplot2::geom_text(aes(x = max(rel_position) - buffer_length_bp),
-                    y = max(rp2.cov_df$coverage),
+                    y = 2 * 1.02,
                     label = "TTS") +
-  ggplot2::scale_x_continuous(breaks = c(buffer_length_bp * -1, 0, buffer_length_bp)) +
-  ggbreak::scale_x_break(c(buffer_length_bp, buffer_length_bp)) +
+  ggplot2::scale_x_continuous(
+    breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
+    labels = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp, buffer_length_bp * 2)
+  ) +
+  ggbreak::scale_x_break(
+    breaks = c(buffer_length_bp, buffer_length_bp)
+  ) +
   labs(x = "",
        y = "Mean number of\nTy1 insertions (coverage)") +
   theme_bw() +
@@ -693,6 +722,9 @@ rp2.cov_df %>%
 ```
 
 ```{r plot-relative-position-coverage}
+
+rp2.cov_df %>% 
+  
 
 ```
 

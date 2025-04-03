@@ -83,7 +83,29 @@ done
 ##              ##
 
 echo "[INFO] converting arabic to roman chromosome names"
-python scripts/arabic_to_roman.py $p_i_features_file $p_o_features_file
+python scripts/arabic_to_roman.py $p_i_features_file $t_features_file
+
+
+echo "[INFO] creating strand-wise feature files"
+cat $t_features_file |
+	grep '\+$' > $t_pos_features_file
+cat $t_features_file |
+	grep '\-$' > $t_neg_features_file
+
+echo "[INFO] sorting strand-wise feature files"
+tmp_file_path="$p_tmp_dir/tmp"
+for ff in $t_pos_features_file $t_neg_features_file
+do
+	mv $ff $tmp_file_path
+	bedtools sort \
+		-i $tmp_file_path \
+		-g $p_i_chr_lengths_file >$ff
+done
+rm $tmp_file_path
+
+echo "[INFO] creating the combined BED file of features"
+cat $t_pos_features_file $t_neg_features_file | \
+	bedtools sort -g $p_i_chr_lengths_file > $p_o_features_file
 
 while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName || [ -n "$fastqName" ]
 do
@@ -95,6 +117,7 @@ do
 	# Define file paths for sample
 	old_bam="${p_i_bam_dir}/${prefix}_${p_bam_suffix}.bam"
 	new_bam_path="${p_o_bam_dir}/${uniqueId}_${p_bam_suffix}.bam"
+	tmp_bed_path="${p_tmp_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"
 	bed_path="${p_o_bed_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"
 
 	if [ ! -f $old_bam ]; then
@@ -102,42 +125,48 @@ do
 		exit
 	fi
 
-	echo "[INFO] Renaming $uniqueId BAM: '$old_bam'"
+	echo -e "[INFO] Renaming $uniqueId BAM:\nsrc:\t'$old_bam'\ndst:\t'$new_bam_path'"
 	cp $old_bam $new_bam_path
 
-	if [ -f $bed_path ]; then
-		rm $bed_path
-	fi
-	touch $bed_path
+	for file_path in $tmp_bed_path $bed_path
+	do
+		if [ -f $file_path ]; then
+			rm $file_path
+		fi
+		touch $file_path
+	done
 
 	echo "[INFO] calculating feature coverage for sample: $uniqueId"
-	# positive-features
-	bedtools bamtobed -i $new_bam_path | \
-		grep '\+$'  | \
-		bedtools coverage \
-		-a $t_pos_features_file \
-		-b - \
+	bedtools genomecov \
+		-ibam $new_bam_path \
 		-d \
-		-g $p_i_chr_lengths_file \
-		-sorted \
-		>> $bed_path
+		-strand + \
+		-fs 1 | \
+		awk -v strand="+" -F"\t" '{OFS="\t"; print $1,$2,$3,strand }' \
+		>> $tmp_bed_path
 
-	# negative-features
-	bedtools bamtobed -i $new_bam_path | \
-		grep '\-$'  | \
-		bedtools coverage \
-		-a $t_neg_features_file \
-		-b - \
+	bedtools genomecov \
+		-ibam $new_bam_path \
 		-d \
-		-g $p_i_chr_lengths_file \
-		-sorted \
-		>> $bed_path
+		-strand - \
+		-fs 1 | \
+		awk -v strand="-" -F"\t" '{OFS="\t"; print $1,$2,$3,strand }' \
+		>> $tmp_bed_path
+
+	# Intersect the coverage with the features
+	cat $tmp_bed_path | \
+	awk -F"\t" '{ OFS="\t"; print $1,$2,$2,$3,$4 }' | \
+	bedtools intersect \
+	-a $p_o_features_file -b - \
+	-wa -wb | \
+	awk -F"\t" '{ OFS="\t"; if ( $5 == $10 ) print $1,$7,$5,$4,$9 }' > $bed_path
 
 	# Write to the output file path
-	echo "[INFO] sorting and concatenating BED file '$bed_path'"
-	bedtools sort -g $p_i_chr_lengths_file -i $bed_path | \
-		awk -v id="$uniqueId" '{ OFS="\t"; print id,$0 }' >> \
+	echo "[INFO] concatenating BED file '$bed_path'"
+	cat $bed_path | \
+		awk -F"\t" -v id="$uniqueId" '{ OFS="\t"; if ($NF > 0) print id,$0 }' >> \
 		$p_o_coverage_file
+
 done<$p_i_sample_name_map
 
 
