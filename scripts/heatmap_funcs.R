@@ -1,26 +1,29 @@
 
 extract_metadata_from_library_names <- function(df) {
-  df %>% 
+  df %>%
     mutate(
+      library = gsub(pattern = "[[:punct:]]",
+                     replacement = '-',
+                     x = library),
       subunit = case_when(
         grepl("34", library) ~ "RPC34",
         grepl("53", library) ~ "RPC53",
         grepl("160", library) ~ "RPC160",
         .default = "Other"),
       sugar = case_when(
-        grepl(x=library, pattern = "_Dex$", perl = TRUE, ignore.case = TRUE) ~ "Dextrose",
-        grepl(x=library, pattern = "_Gal$", perl = TRUE, ignore.case = TRUE) ~ "Galactose",
+        grepl(x=library, pattern = "-Dex$", perl = TRUE, ignore.case = TRUE) ~ "Dextrose",
+        grepl(x=library, pattern = "-Gal$", perl = TRUE, ignore.case = TRUE) ~ "Galactose",
         .default = NA
       ),
       strain.type = case_when(
-        grepl(x=library, pattern = "WT_", perl = TRUE, ignore.case = TRUE) ~ "Wild-type",
+        grepl(x=library, pattern = "WT-", perl = TRUE, ignore.case = TRUE) ~ "Wild-type",
         .default = "Mutant"
       ),
-      group = gsub(x = library, pattern = "_(Gal|Dex)$", replacement = ''),
+      group = gsub(x = library, pattern = "-(Gal|Dex)$", replacement = ''),
       group = gsub(x = group, pattern = "(?i)r[op]c[0-9]{2,3}", replacement = ''),
-      group = stringr::str_remove(group, pattern = "deletion_set_background"),
-      group = gsub(x = group, pattern = "^(\\.|_)", replacement = ''),
-      group = gsub(x = group, pattern = "\\.", replacement = '_'),
+      group = stringr::str_remove(group, pattern = "deletion-set-background"),
+      group = gsub(x = group, pattern = "^(\\.|_|-)", replacement = '')
+      # group = gsub(x = group, pattern = "-", replacement = '_'),
     ) %>% 
     return()
 }
