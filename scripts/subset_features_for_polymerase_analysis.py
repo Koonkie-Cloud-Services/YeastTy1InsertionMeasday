@@ -21,7 +21,7 @@ class Feature(gff_Feature):
         start: int = -1,
         end: int = -1,
         strand: str = "",
-        **kwargs
+        **kwargs,
     ):
         self.seqid = str(seqid)
         self.start = int(start)
@@ -32,12 +32,16 @@ class Feature(gff_Feature):
         self.attributes = {}
 
         if len(kwargs) > 0:
-            self.attributes[kwargs.get("Attribute_name")] = kwargs.get("Attribute_value")
-    
+            self.attributes[kwargs.get("Attribute_name")] = kwargs.get(
+                "Attribute_value"
+            )
+
         return
 
     def to_bed(self):
-        return f"{self.seqid}\t{self.start}\t{self.end}\t{self.featuretype}\t{self.strand}"
+        return (
+            f"{self.seqid}\t{self.start}\t{self.end}\t{self.featuretype}\t{self.strand}"
+        )
 
     def has_coordinates(self) -> bool:
         return self.start >= 0 and self.end > 1 and self.seqid != ""
@@ -60,8 +64,10 @@ class FeatureDB:
             raise StopIteration
 
     def get_features_of_type(self, feature_type: str) -> List[Feature]:
-        return [feature for feature in self.features if feature.featuretype == feature_type]
-    
+        return [
+            feature for feature in self.features if feature.featuretype == feature_type
+        ]
+
     def all_features(self, **kwargs) -> List[Feature]:
         if kwargs.get("featuretype") is None:
             return self.features
@@ -88,7 +94,7 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
         "--gff_in",
         dest="p_i_gff",
         type=str,
-        help="Path to the input GFF file containing genomic features"
+        help="Path to the input GFF file containing genomic features",
     )
     parser.add_argument(
         "--xlsx_in",
@@ -113,6 +119,14 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
         help="The number of base pairs to add to the start and end of each feature",
     )
     parser.add_argument(
+        "--adjacent_buffer_length",
+        dest="p_i_adjacent_buffer_length",
+        type=int,
+        default=0,
+        required=False,
+        help="The number of base pairs separating adjacent features between features transcribed by RNA polymerase II and III",
+    )
+    parser.add_argument(
         "--sheet_name",
         dest="p_i_sheet_name",
         type=str,
@@ -124,6 +138,7 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
 
 def get_bed_file_name(p_o_bed_prefix: str, rna_pol: int) -> str:
     return f"{p_o_bed_prefix}.RNA_Pol_{rna_pol}.bed"
+
 
 def load_features_from_bed_file(p_i_bed: str) -> FeatureDB:
     features = []
@@ -163,6 +178,7 @@ def load_target_feature_info(
             target_features[row["RNA.Polymerase"]] = [feature]
     return target_features
 
+
 def build_chrom_id_index(gff_db: FeatureDB) -> Dict[str, str]:
     chrom_id_map = {}
     chrom_prefix = "chr"
@@ -175,6 +191,7 @@ def build_chrom_id_index(gff_db: FeatureDB) -> Dict[str, str]:
                 f"Region feature must have a 'Name' attribute.\n{print(ft_inst)}"
             )
     return chrom_id_map
+
 
 def match_features_in_db(
     feature_db: FeatureDB | gff_FeatureDB, features_in: List[Feature]
@@ -196,9 +213,9 @@ def match_features_in_db(
     return features_out
 
 
-def load_buffer_specs(p_i_xlsx: str,
-                      p_i_sheet_name: str,
-                      **kwargs) -> Dict[str, BUFFER_SPEC]:
+def load_buffer_specs(
+    p_i_xlsx: str, p_i_sheet_name: str, **kwargs
+) -> Dict[str, BUFFER_SPEC]:
     buffer_specs = {}
     df = pd.read_excel(p_i_xlsx, sheet_name=p_i_sheet_name)
     for _index, row in df.iterrows():
@@ -208,18 +225,15 @@ def load_buffer_specs(p_i_xlsx: str,
             bl = row["Buffer.length"]
 
         buffer_specs[row["Feature.name"]] = BUFFER_SPEC(
-            feature_name = row["Feature.name"],
-            prefix = "",
-            sep = " ",
-            length = bl
+            feature_name=row["Feature.name"], prefix="", sep=" ", length=bl
         )
     return buffer_specs
 
 
-def buffer_features(features_in: List[Feature],
-                    buffer_specs: Dict[str, BUFFER_SPEC],
-                    **kwargs) -> List[Feature]:
-    
+def buffer_features(
+    features_in: List[Feature], buffer_specs: Dict[str, BUFFER_SPEC], **kwargs
+) -> List[Feature]:
+
     buffer_prefix = kwargs.get("buffer_prefix", ["upstream", "downstream"])
     buffer_sep = kwargs.get("buffer_sep", " ")
     buffer_feature_attr = kwargs.get("buffer_feature_attr", "featuretype")
@@ -239,7 +253,7 @@ def buffer_features(features_in: List[Feature],
             )
         us_feat = Feature(
             id=f"{buffer_prefix[0]}{buffer_sep}{attr}",
-            featuretype=attr,    
+            featuretype=attr,
             seqid=feature.seqid,
             start=max(feature.start - buffer_spec.length, 1),
             end=feature.start,
@@ -256,9 +270,12 @@ def buffer_features(features_in: List[Feature],
         features_out.extend([us_feat, feature, ds_feat])
     return features_out
 
-def write_features_to_bed_file(p_o_bed: str, features_in: List[Feature], **kwargs) -> None:
+
+def write_features_to_bed_file(
+    p_o_bed: str, features_in: List[Feature], **kwargs
+) -> None:
     chrom_prefix = kwargs.get("chrom_prefix", "chr")
-    chrom_skip = kwargs.get("chrom_skip", ['MT'])
+    chrom_skip = kwargs.get("chrom_skip", ["MT"])
     chrom_skip.extend([chrom_prefix + chrom for chrom in chrom_skip])
     with open(p_o_bed, "w") as f:
         for feature in features_in:
@@ -271,23 +288,21 @@ def write_features_to_bed_file(p_o_bed: str, features_in: List[Feature], **kwarg
                 f.write(f"{format_feature_as_bed(feature)}\n")
     return
 
-def overlap_features(
-    feature_a: Feature, feature_b: Feature, **kwargs
-) -> bool:
+
+def overlap_features(feature_a: Feature, feature_b: Feature, **kwargs) -> bool:
     buffer_length = kwargs.get("buffer_length", 0)
     if feature_a.seqid != feature_b.seqid:
         return False
-    if feature_a.start - buffer_length > feature_b.end or \
-       feature_b.start - buffer_length > feature_a.end:
+    if (
+        feature_a.start - buffer_length > feature_b.end
+        or feature_b.start - buffer_length > feature_a.end
+    ):
         return False
     return True
 
-def convert_chromosome_id_to_integer(
-    seqid: str
-) -> int:
-    roman_to_int = {
-        'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000
-    }
+
+def convert_chromosome_id_to_integer(seqid: str) -> int:
+    roman_to_int = {"I": 1, "V": 5, "X": 10, "L": 50, "C": 100, "D": 500, "M": 1000}
     roman_id = seqid.replace("chr", "")
     integer_id = 0
     prev_value = 0
@@ -311,6 +326,7 @@ def convert_chromosome_id_to_integer(
 
     return integer_id
 
+
 def filter_adjacent_features(
     poison_features: List[Feature], query_features: List[Feature], **kwargs
 ) -> List[Feature]:
@@ -326,7 +342,7 @@ def filter_adjacent_features(
     # Sort both lists by seqid and start position
     poison_features = sorted(poison_features, key=lambda x: (x.seqid, x.start))
     query_features = sorted(query_features, key=lambda x: (x.seqid, x.start))
-    
+
     # Initialize indices for both lists
     i = 0
     j = 0
@@ -356,7 +372,7 @@ def filter_adjacent_features(
         else:
             i += 1
             j += 1
-    
+
     return query_features
 
 
@@ -369,11 +385,10 @@ def main(args=None):
     else:
         raise ValueError("No input file provided")
 
-    target_features = load_target_feature_info(opts.p_i_xlsx,
-                                               opts.p_i_sheet_name)
-    buffer_specs = load_buffer_specs(opts.p_i_xlsx,
-                                     opts.p_i_sheet_name,
-                                     default_buffer_length_bp=1000)
+    target_features = load_target_feature_info(opts.p_i_xlsx, opts.p_i_sheet_name)
+    buffer_specs = load_buffer_specs(
+        opts.p_i_xlsx, opts.p_i_sheet_name, default_buffer_length_bp=1000
+    )
 
     prev_features = []
     for rna_pol in [3, 2]:
@@ -387,15 +402,19 @@ def main(args=None):
             prev_features.extend(feature_set)
             feature_set = buffer_features(feature_set, buffer_specs)
         else:
-            feature_set = buffer_features(feature_set,
-                                          buffer_specs,
-                                          buffer_feature_attr="id",
-                                          buffer_prefix=["", ""],
-                                          buffer_sep="")
+            feature_set = buffer_features(
+                feature_set,
+                buffer_specs,
+                buffer_feature_attr="id",
+                buffer_prefix=["", ""],
+                buffer_sep="",
+            )
             pre_count = len(feature_set)
-            feature_set = filter_adjacent_features(prev_features,
-                                                   feature_set,
-                                                   buffer_length=1500)
+            feature_set = filter_adjacent_features(
+                prev_features,
+                feature_set,
+                buffer_length=opts.p_i_adjacent_buffer_length,
+            )
             post_count = len(feature_set)
             print(f"Filtered {pre_count - post_count} adjacent features")
 
