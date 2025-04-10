@@ -294,6 +294,15 @@ def convert_chromosome_id_to_integer(
 
     for char in reversed(roman_id):
         current_value = roman_to_int.get(char, 0)
+        if current_value == 0:
+            if char.isdigit():
+                try:
+                    return int(roman_id)
+                except ValueError:
+                    raise ValueError(f"Invalid chromosome ID: {seqid}")
+            else:
+                raise ValueError(f"Invalid chromosome ID: {seqid}")
+
         if current_value < prev_value:
             integer_id -= current_value
         else:
