@@ -271,6 +271,85 @@ def write_features_to_bed_file(p_o_bed: str, features_in: List[Feature], **kwarg
                 f.write(f"{format_feature_as_bed(feature)}\n")
     return
 
+def overlap_features(
+    feature_a: Feature, feature_b: Feature, **kwargs
+) -> bool:
+    buffer_length = kwargs.get("buffer_length", 0)
+    if feature_a.seqid != feature_b.seqid:
+        return False
+    if feature_a.start - buffer_length > feature_b.end or \
+       feature_b.start - buffer_length > feature_a.end:
+        return False
+    return True
+
+def convert_chromosome_id_to_integer(
+    seqid: str
+) -> int:
+    roman_to_int = {
+        'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000
+    }
+    roman_id = seqid.replace("chr", "")
+    integer_id = 0
+    prev_value = 0
+
+    for char in reversed(roman_id):
+        current_value = roman_to_int.get(char, 0)
+        if current_value < prev_value:
+            integer_id -= current_value
+        else:
+            integer_id += current_value
+        prev_value = current_value
+
+    return integer_id
+
+def filter_adjacent_features(
+    poison_features: List[Feature], query_features: List[Feature], **kwargs
+) -> List[Feature]:
+    buffer_length = kwargs.get("buffer_length", 0)
+    skip_chrom = kwargs.get("skip_chrom", ["MT"])
+
+    skip_chrom.extend([f"chr{chrom}" for chrom in skip_chrom])
+    poison_features = [feat for feat in poison_features if feat.seqid not in skip_chrom]
+    query_features = [feat for feat in query_features if feat.seqid not in skip_chrom]
+    if len(poison_features) == 0 or len(query_features) == 0:
+        return
+
+    # Sort both lists by seqid and start position
+    poison_features = sorted(poison_features, key=lambda x: (x.seqid, x.start))
+    query_features = sorted(query_features, key=lambda x: (x.seqid, x.start))
+    
+    # Initialize indices for both lists
+    i = 0
+    j = 0
+
+    # Iterate through both lists until one is exhausted
+    while i < len(query_features) and j < len(poison_features):
+        feat_q = query_features[i]
+        feat_p = poison_features[j]
+        seqid_q = convert_chromosome_id_to_integer(feat_q.seqid)
+        seqid_p = convert_chromosome_id_to_integer(feat_p.seqid)
+        if seqid_q < seqid_p:
+            i += 1
+            continue
+        if seqid_q > seqid_p:
+            j += 1
+            continue
+
+        # If the chromosome IDs are equal, compare the start positions
+        if seqid_q == 2 or seqid_p == 2:
+            pass
+        if feat_p.start - buffer_length > feat_q.end:
+            i += 1
+        elif feat_q.start - buffer_length > feat_p.end:
+            j += 1
+        elif overlap_features(feat_q, feat_p, buffer_length=buffer_length):
+            query_features.pop(i)
+        else:
+            i += 1
+            j += 1
+    
+    return query_features
+
 
 def main(args=None):
     opts = get_options(args)
@@ -287,10 +366,16 @@ def main(args=None):
                                      opts.p_i_sheet_name,
                                      default_buffer_length_bp=1000)
 
-    for rna_pol, feature_set in target_features.items():
+    prev_features = []
+    for rna_pol in [3, 2]:
+        feature_set = target_features.get(rna_pol)
+        if feature_set is None:
+            continue
+
         output_bed_path = get_bed_file_name(opts.p_o_bed_prefix, rna_pol)
         feature_set = match_features_in_db(feature_db, feature_set)
         if rna_pol == 3:
+            prev_features.extend(feature_set)
             feature_set = buffer_features(feature_set, buffer_specs)
         else:
             feature_set = buffer_features(feature_set,
@@ -298,6 +383,13 @@ def main(args=None):
                                           buffer_feature_attr="id",
                                           buffer_prefix=["", ""],
                                           buffer_sep="")
+            pre_count = len(feature_set)
+            feature_set = filter_adjacent_features(prev_features,
+                                                   feature_set,
+                                                   buffer_length=1500)
+            post_count = len(feature_set)
+            print(f"Filtered {pre_count - post_count} adjacent features")
+
         write_features_to_bed_file(output_bed_path, feature_set)
     return
 
