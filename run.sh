@@ -40,6 +40,7 @@ python scripts/subset_features_for_polymerase_analysis.py \
 	--xlsx_in "${input_dir}/custom_feature_annotations.xlsx" \
 	--bed_out_prefix "${p_o_features_dir}/polymerase_analysis" \
 	--buffer_length_bp 1000 \
+	--adjacent_buffer_length 1500 \
 	--sheet_name "polymerase_analysis"
 
 # Calculate genome coverage for all features
@@ -47,7 +48,6 @@ ln -s $PWD/$input_dir $p_o_coverage_dir
 ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 ./scripts/calculate_position_coverage.sh \
 	$p_o_coverage_dir "${p_o_features_dir}/polymerase_analysis.RNA_Pol_2.bed" "dupremoved.sorted"
-exit
 ./scripts/calculate_feature_coverage.sh \
 	$p_o_coverage_dir "dupremoved.sorted" "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed"
 ./scripts/calculate_feature_coverage.sh \

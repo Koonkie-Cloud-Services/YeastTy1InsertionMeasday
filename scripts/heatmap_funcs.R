@@ -56,7 +56,7 @@ summarise_coverage_by_feature <- function(df, ...) {
     return()
 }
 
-load_genome_coverage_data_frame <- function(file_path, blackout_df, neighbourhoods) {
+load_genome_coverage_data_frame <- function(file_path, blackout_df, neighbourhoods, library_size_df) {
   hm.cov_file_column_names <- c(
     "library"="V1",
     "chr"="V2",
@@ -76,7 +76,7 @@ load_genome_coverage_data_frame <- function(file_path, blackout_df, neighbourhoo
     aggregate_neighbourhood_coverage(ft_list = neighbourhoods) %>% 
     extract_metadata_from_library_names %>% 
     filter_blackout_regions(blackout_df) %>%
-    calculate_tpm(read_counts %>% 
+    calculate_tpm(library_size_df %>% 
                     dplyr::filter(norm_type == p.read_norm_type)) %>%
     dplyr::ungroup() %>% 
     dplyr::arrange(library, feature.name) %>% 
