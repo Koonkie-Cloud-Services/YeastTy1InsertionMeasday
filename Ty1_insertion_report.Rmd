@@ -82,10 +82,8 @@ if (! dir.exists(params$output_dir) )
   dir.create(params$output_dir)
 ```
 
-# Ty1 insertion quantification at tRNA genes
-
 ```{r load-library-depth-data}
-read_counts <- readxl::read_xlsx(path = p.library_size_file) %>% 
+read_counts_df <- readxl::read_xlsx(path = p.library_size_file) %>% 
   pivot_longer(where(is.numeric),
                names_to = "norm_type",
                values_to = "seq_library_size") %>%
@@ -93,8 +91,370 @@ read_counts <- readxl::read_xlsx(path = p.library_size_file) %>%
     library = gsub(pattern = "[[:punct:]]",
                    replacement = '-',
                    x = library)
-  )
+  ) %>% 
+  extract_metadata_from_library_names()
 ```
+
+```{r define-category-palettes}
+
+metadata_palette_list <- read_counts_df %>% 
+  dplyr::distinct(subunit, strain.type, sugar, group) %>% 
+  colour_metadata(
+    brewer_palette_name = c("BrBG", "Paired", "Set3", "Spectral"),
+    palette_size = 11
+  )
+
+subunit_pal_names <- setNames(
+  unique(pull(read_counts_df, subunit)),
+  c("Blues", "Greens", "Purples", "Reds")
+)
+metadata_palette_list[["group"]] <- setNames("#969696", c("WT"))
+for (i in seq(1, length(subunit_pal_names))) {
+  n <- read_counts_df %>%
+    filter(
+      subunit == subunit_pal_names[[i]],
+      group != "WT") %>%
+    distinct(group) %>%
+    colour_metadata(brewer_palette_name = names(subunit_pal_names)[i])
+  metadata_palette_list[["group"]] <- c(
+    metadata_palette_list[["group"]], n[["group"]]
+  )
+}
+metadata_palette_list[["library"]] <- setNames("#969696", c("WT"))
+for (i in seq(1, length(subunit_pal_names))) {
+  n <- read_counts_df %>%
+    filter(subunit == subunit_pal_names[[i]]) %>%
+    distinct(library) %>%
+    colour_metadata(brewer_palette_name = names(subunit_pal_names)[i])
+  metadata_palette_list[["library"]] <- c(
+    metadata_palette_list[["library"]], n[["library"]]
+  )
+}
+
+```
+
+# Coverage at genes transcribed by RNA Polymerase II
+
+```{r load-rna-pol-ii-table, eval=TRUE}
+rpii.cov_columns <- c("library", "seqid", "position", "strand", "feature", "coverage")
+rpii.cov_df <- readr::read_tsv(file=p.rpii.cov_file,
+                               col_names = rpii.cov_columns) %>% 
+  mutate(library = gsub(pattern = "[[:punct:]]",
+                        replacement = '-',
+                        x = library))
+
+rpii.gene_df <- readr::read_tsv(file=p.rpii.feature_bed_file,
+                               col_names = c("seqid", "start", "stop", "feature", "strand")) %>% 
+  group_by(feature) %>% 
+  mutate(id = row_number()) %>% 
+  filter(id == 2) %>% # Grab just the true coordinates of the gene. 1 & 3 correspond to buffer regions.
+  select(feature, start, stop) %>% 
+  mutate(length = stop - start)
+```
+
+```{r test-rna-pol-ii-table, eval=FALSE}
+row_count <- 6000
+
+replicate_items <- function(items, total_count) {
+  is.wholenumber <- function(n)
+    return(round(n) == n)
+
+  frac <- total_count / length(items)
+  if (!is.wholenumber(frac))
+    stop(
+      paste("total_count is not divisible by number of items:", frac)
+    )
+  unlist(lapply(items, rep.int, frac))
+}
+
+rpii.cov_df <- data.frame(
+  library = replicate_items(c('lib_abc'), row_count),
+  seqid = replicate_items(c('chr1'), row_count),
+  strand = replicate_items(c('+'), row_count),
+  rel_position = seq.int(from = 0, length.out = row_count, by = 2),
+  coverage = round(rnorm(row_count, mean = 3, sd = 3)),
+  feature = replicate_items(c('gene1', 'gene2', 'gene3'), row_count)
+) %>% 
+  dplyr::mutate(
+    feature = gsub(pattern = "^gene-", replacement = "", x = feature)
+  )
+
+rpii.gene_df <- data.frame(
+  feature = c('gene1', 'gene2', 'gene3'),
+  start = c(0, 1000, 2000),
+  stop = c(1000, 2000, 3000),
+  length = c(1000, 1000, 1000)
+)
+
+rpii.nucleosome_df <- readxl::read_xlsx(
+  path = "data/input/13059_2018_1398_MOESM2_ESM.xlsx"
+) %>%
+  dplyr::rename(
+    "Nucleosome_up" = "+1 nucleosome",
+    "Nucleosome_down" = "-1 nucleosome"
+  ) %>% 
+  dplyr::select(ORF, Chr, TSS, TTS, Nucleosome_up, Nucleosome_down)
+  
+
+```
+
+```{r prepare-rpii-coverage-dataframe}
+buffer_length_bp <- 500
+
+prep_position_wise_feature_coverage_df <- function(df,
+                                                   gene_df,
+                                                   min_gene_read_count = 1,
+                                                   min_gene_coverage = 0,
+                                                   min_feature_length = buffer_length_bp * 2,
+                                                   add_zero_coverage_positions = TRUE,
+                                                   summarise_by_position = TRUE) {
+  input_gene_count <- nrow(gene_df)
+  feature_length_list <- gene_df %>% 
+    filter(length >= min_feature_length) %>% 
+    pull(feature)
+  message(
+    paste("Dropped", input_gene_count - length(feature_length_list), "genes shorter than", min_feature_length, "bp")
+  )
+  
+  feature_cov_list <- df %>% 
+    group_by(library, feature) %>%
+    summarise(
+      read_total = sum(coverage.raw),
+      coverage_total = sum(coverage),
+      .groups = "keep"
+    ) %>% 
+    filter(
+      read_total >= min_gene_read_count,
+      coverage_total >= min_gene_coverage
+    ) %>% 
+    pull(feature) %>% 
+    unique()
+  message(
+    paste("Dropped", input_gene_count - length(feature_cov_list), "low-coverage genes")
+  )
+  
+  feature_list <- base::intersect(feature_length_list, feature_cov_list)
+  message(
+    paste("Analyzing ", length(feature_list), "/",  input_gene_count, " genes", sep = "")
+  )
+  
+  result_df <- df %>%
+    filter(
+      feature %in% feature_list
+    ) %>%
+    left_join(gene_df,
+              by = "feature") %>% 
+    mutate(
+      rel_position = case_when(
+        start + buffer_length_bp > position ~ position - start,
+        stop - buffer_length_bp < position ~ position - stop + (2 * buffer_length_bp),
+        .default = NA
+      ),
+      rel_position = case_when(
+        strand == '-' ~ (rel_position * -1) +  (2 * buffer_length_bp),
+        .default = rel_position
+      )
+    ) %>%
+    dplyr::filter(
+      !is.na(rel_position)
+    ) %>%
+    select(library, seqid, rel_position, strand, feature, coverage)
+
+  if (add_zero_coverage_positions == TRUE) {
+    result_df <- result_df %>%
+      dplyr::group_by(library, seqid, strand, feature) %>%
+      tidyr::expand(rel_position = seq.int(from = buffer_length_bp * -1,
+                                           to = buffer_length_bp * 3)) %>% 
+      dplyr::mutate(coverage = NA) %>% 
+      left_join(result_df,
+                by = c("library", "seqid", "strand", "feature", "rel_position"),
+                suffix = c("_df1", "_df2")) %>%
+      mutate(
+        coverage = coalesce(coverage_df1, coverage_df2),
+        coverage = coalesce(coverage, 0)
+      ) %>%
+      select(!all_of(c("coverage_df1", "coverage_df2")))
+  }
+  
+  if (summarise_by_position == TRUE) {
+    result_df <- result_df %>% 
+      group_by(library, rel_position) %>% 
+      dplyr::reframe(coverage = sum(coverage),
+                     .groups = "keep")
+  }
+  
+  if (nrow(result_df) == 0)
+    stop("All genes dropped by filtering thresholds.")
+  return(result_df)
+}
+```
+
+```{r define-gene-position-coverage-plotting-function}
+plot_position_coverage <- function(df,
+                                   palette_vals,
+                                   plot_type = "smooth",
+                                   label_y_position = 0,
+                                   x_gap_size = 20) {
+  if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
+    stop("Invalid plot type")
+
+  plt <- df %>% 
+    ggplot(aes(
+      x = rel_position,
+      y = coverage,
+      group = library
+    )) +
+    ggplot2::annotate("text",
+                      x = -100,
+                      y = label_y_position,
+                      label = "TSS") +
+    ggplot2::annotate("text",
+                      x = 1100,
+                      y = label_y_position,
+                      label = "TTS") +
+    ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
+                        linetype = "dashed") +
+    ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
+                        linetype = "dashed") +
+    ggplot2::facet_grid(rows = vars(subunit)) +
+    # ggplot2::coord_cartesian(clip = 'on',
+    #                          ylim = c(1, 1.3)) +
+    ggplot2::scale_colour_manual(values = palette_vals) +
+    ggplot2::guides(colour = guide_legend(title = "")) +
+    ggplot2::scale_x_continuous(
+      breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
+      labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
+    ) +
+    # ggbreak::scale_x_break(
+    #   breaks = c(buffer_length_bp, buffer_length_bp)
+    # ) +
+    labs(x = "",
+         y = "Number of Ty1\ninsertions (coverage)") +
+    theme_bw() +
+    theme(plot.margin = unit(c(2,1,1,1), "lines"))
+  
+  if (plot_type == "smooth") {
+    plt <- plt +
+      geom_smooth(se = FALSE,
+                  colour = "black",
+                  method = "loess",
+                  formula = y ~ x,
+                  span = 0.05,
+                  level = 0.98,
+                  linewidth = 2) +
+      geom_smooth(se = FALSE,
+                  method = "loess",
+                  formula = y ~ x,
+                  span = 0.05,
+                  level = 0.98,
+                  aes(colour = library),
+                  linewidth = 1.5)
+  }
+  else if (plot_type == "line") {
+    plt <- plt +
+      geom_line(colour = "black",
+                linewidth = 2) +
+      geom_line(aes(colour = library),
+                linewidth = 1.5)
+  }
+  else if (plot_type == "bar") {
+    plt <- plt +
+      geom_bar(
+        colour = "black",
+        aes(fill = library),
+        stat = "identity"
+      )
+  }
+  else {
+    stop("Unimplemented plot type.")
+  }
+  plt <- plt +
+    ggplot2::geom_rect(
+    xmin = buffer_length_bp - x_gap_size,
+    xmax = buffer_length_bp + x_gap_size,
+    ymin = 0,
+    ymax = 1E-5,
+    fill = "white",
+    colour = "white",
+    alpha = 0.8,
+    inherit.aes = FALSE
+  )
+  return(plt)
+}
+```
+
+```{r plot-absolute-position-coverage}
+
+rpii.cov_df %>%
+  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  dplyr::rename(
+    "coverage.raw" = coverage,
+    "coverage" = coverage.norm
+  ) %>%
+  prep_position_wise_feature_coverage_df(rpii.gene_df,
+                                         min_gene_coverage = 0,
+                                         min_gene_read_count = 1,
+                                         add_zero_coverage_positions = FALSE,
+                                         summarise_by_position = TRUE) %>%
+  extract_metadata_from_library_names() %>%
+  filter(
+    # subunit %in% c("RPC34", "RPC53", "RPC160"),
+    sugar == "Galactose"
+  ) %>%
+  plot_position_coverage(plot_type = "smooth",
+                         palette_vals = metadata_palette_list[["library"]],
+                         label_y_position = 8E-6)  # 3E-7 when positions with zero reads mapped are included
+  
+```
+
+```{r plot-gene-coverage-distribution, fig.height=8, fig.width=13}
+
+plot_coverage_stacked_barplot <- function(df, palette_vals) {
+  df %>% 
+    group_by(library, feature) %>% 
+    reframe(coverage = sum(coverage)) %>%
+    ggplot(aes(x = log(coverage), fill = library)) +
+    labs(x = "log(coverage)",
+         y = "Gene count") +
+    ggplot2::scale_fill_manual(values = palette_vals) +
+    geom_histogram(colour = "black", linewidth = 0.1, bins = 50) +
+    theme_bw()
+}
+
+rpii.cov_df %>%
+  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  dplyr::rename(
+    "coverage.raw" = coverage,
+    "coverage" = coverage.norm
+  ) %>%
+  prep_position_wise_feature_coverage_df(rpii.gene_df,
+                                         min_gene_coverage = 1E-7,
+                                         min_gene_read_count = 10,
+                                         add_zero_coverage_positions = FALSE,
+                                         summarise_by_position = FALSE) %>%
+  plot_coverage_stacked_barplot(palette_vals = metadata_palette_list[["library"]])
+
+```
+
+```{r plot-raw-gene-coverage-histogram}
+rpii.cov_df %>%
+  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  dplyr::rename(
+    "coverage.raw" = coverage,
+    "coverage" = coverage.norm
+  ) %>%
+  prep_position_wise_feature_coverage_df(rpii.gene_df,
+                                         min_gene_coverage = 1E-5,
+                                         min_gene_read_count = 100,
+                                         add_zero_coverage_positions = FALSE,
+                                         summarise_by_position = TRUE) %>%
+  extract_metadata_from_library_names() %>%
+  plot_position_coverage(plot_type = "bar",
+                         palette_vals = metadata_palette_list[["library"]])
+
+```
+
+# Ty1 insertion quantification at tRNA genes
 
 ```{r load-trna-locations}
 trna_df <- load_trna_region_data_frame(p.bt.trna_bed_path)
@@ -137,7 +497,7 @@ if (nrow(missing) > 0) {
 ```{r transform-data}
 bt.cov_df <- normalise_sequencing_library_coverage(
   df = bt.cov_df,
-  read_counts = read_counts
+  read_counts = read_counts_df
 )
 
 libs_missing <- filter(bt.cov_df, is.na(coverage.norm)) %>% 
@@ -155,44 +515,6 @@ if (length(libs_missing) >= 1) {
 
 ```{r extract-metadata-from-library-names}
 bt.cov_df <- extract_metadata_from_library_names(bt.cov_df)
-```
-
-```{r define-category-palettes}
-
-metadata_palette_list <- bt.cov_df %>% 
-  dplyr::distinct(subunit, strain.type, sugar, group) %>% 
-  colour_metadata(
-    brewer_palette_name = c("BrBG", "Paired", "Set3", "Spectral"),
-    palette_size = 11
-  )
-
-subunit_pal_names <- setNames(
-  unique(pull(bt.cov_df, subunit)),
-  c("Blues", "Greens", "Purples", "Reds")
-)
-metadata_palette_list[["group"]] <- setNames("#969696", c("WT"))
-for (i in seq(1, length(subunit_pal_names))) {
-  n <- bt.cov_df %>%
-    filter(
-      subunit == subunit_pal_names[[i]],
-      group != "WT") %>%
-    distinct(group) %>%
-    colour_metadata(brewer_palette_name = names(subunit_pal_names)[i])
-  metadata_palette_list[["group"]] <- c(
-    metadata_palette_list[["group"]], n[["group"]]
-  )
-}
-metadata_palette_list[["library"]] <- setNames("#969696", c("WT"))
-for (i in seq(1, length(subunit_pal_names))) {
-  n <- bt.cov_df %>%
-    filter(subunit == subunit_pal_names[[i]]) %>%
-    distinct(library) %>%
-    colour_metadata(brewer_palette_name = names(subunit_pal_names)[i])
-  metadata_palette_list[["library"]] <- c(
-    metadata_palette_list[["library"]], n[["library"]]
-  )
-}
-
 ```
 
 ## Butterfly plot
@@ -461,7 +783,8 @@ feature_neighbourhood_list <- readxl::read_xlsx(
 hm.full_cov_df <- load_genome_coverage_data_frame(
   p.hm.cov_file,
   blackout_df = feature_filter_df,
-  neighbourhoods = feature_neighbourhood_list
+  neighbourhoods = feature_neighbourhood_list,
+  library_size_df = read_counts_df
 )
 
 hm.cov_df <- hm.full_cov_df %>% 
@@ -474,7 +797,7 @@ The coverage values of the upstream and downstream of the following features wer
 hm.cov_df %>% 
   group_by(library) %>% 
   reframe(total_coverage_count = sum(read_count)) %>% 
-  left_join(read_counts %>% 
+  left_join(read_counts_df %>% 
               .fix_library_names() %>% 
               dplyr::filter(norm_type == "Dedup"),
             by = "library") %>% 
@@ -632,245 +955,6 @@ for (panel in unique(hm.meta_df$subunit)) {
 }
 ```
 
-# Coverage at genes transcribed by RNA Polymerase II
-
-```{r load-rna-pol-ii-table, eval=TRUE}
-rpii.cov_columns <- c("library", "seqid", "position", "strand", "feature", "coverage")
-rpii.cov_df <- readr::read_tsv(file=p.rpii.cov_file,
-                               col_names = rpii.cov_columns) %>% 
-  mutate(library = gsub(pattern = "[[:punct:]]",
-                        replacement = '-',
-                        x = library))
-
-rpii.gene_df <- readr::read_tsv(file=p.rpii.feature_bed_file,
-                               col_names = c("seqid", "start", "stop", "feature", "strand")) %>% 
-  group_by(feature) %>% 
-  mutate(id = row_number()) %>% 
-  filter(id == 2) %>% # Grab just the true coordinates of the gene. 1 & 3 correspond to buffer regions.
-  select(feature, start, stop) %>% 
-  mutate(length = stop - start)
-```
-
-```{r test-rna-pol-ii-table, eval=FALSE}
-row_count <- 6000
-
-replicate_items <- function(items, total_count) {
-  is.wholenumber <- function(n)
-    return(round(n) == n)
-
-  frac <- total_count / length(items)
-  if (!is.wholenumber(frac))
-    stop(
-      paste("total_count is not divisible by number of items:", frac)
-    )
-  unlist(lapply(items, rep.int, frac))
-}
-
-rpii.cov_df <- data.frame(
-  library = replicate_items(c('lib_abc'), row_count),
-  seqid = replicate_items(c('chr1'), row_count),
-  strand = replicate_items(c('+'), row_count),
-  rel_position = seq.int(from = 0, length.out = row_count, by = 2),
-  coverage = round(rnorm(row_count, mean = 3, sd = 3)),
-  feature = replicate_items(c('gene1', 'gene2', 'gene3'), row_count)
-  )
-
-rpii.gene_df <- data.frame(
-  feature = c('gene1', 'gene2', 'gene3'),
-  start = c(0, 1000, 2000),
-  stop = c(1000, 2000, 3000),
-  length = c(1000, 1000, 1000)
-)
-
-```
-
-```{r prepare-rpii-coverage-dataframe}
-buffer_length_bp <- 500
-
-prep_position_wise_feature_coverage_df <- function(df,
-                                                   gene_df,
-                                                   min_gene_coverage = 1,
-                                                   min_feature_length = buffer_length_bp * 2,
-                                                   add_zero_coverage_positions = TRUE,
-                                                   summarise_by_position = TRUE) {
-  input_gene_count <- nrow(gene_df)
-  feature_length_list <- gene_df %>% 
-    filter(length >= min_feature_length) %>% 
-    pull(feature)
-  message(
-    paste("Dropped", input_gene_count - length(feature_length_list), "genes shorter than", min_feature_length, "bp")
-  )
-  
-  feature_cov_list <- df %>% 
-    group_by(library, feature) %>%
-    reframe(total = sum(coverage)) %>% 
-    filter(total > min_gene_coverage) %>% 
-    pull(feature) %>% 
-    unique()
-  message(
-    paste("Dropped", input_gene_count - length(feature_cov_list), "low-coverage genes")
-  )
-  
-  feature_list <- base::intersect(feature_length_list, feature_cov_list)
-  message(
-    paste("Analyzing ", length(feature_list), "/",  input_gene_count, " genes", sep = "")
-  )
-  
-  result_df <- df %>%
-    filter(
-      feature %in% feature_list
-    ) %>%
-    left_join(gene_df,
-              by = "feature") %>% 
-    mutate(
-      rel_position = case_when(
-        start + buffer_length_bp > position ~ position - start,
-        stop - buffer_length_bp < position ~ position - stop + (2 * buffer_length_bp),
-        .default = NA
-      ),
-      rel_position = case_when(
-        strand == '-' ~ (rel_position * -1) +  (2 * buffer_length_bp),
-        .default = rel_position
-      )
-    ) %>%
-    dplyr::filter(
-      !is.na(rel_position)
-    ) %>%
-    select(library, seqid, rel_position, strand, feature, coverage)
-
-  if (add_zero_coverage_positions == TRUE) {
-    result_df <- result_df %>%
-      dplyr::group_by(library, seqid, strand, feature) %>%
-      tidyr::expand(rel_position = seq.int(from = buffer_length_bp * -1,
-                                           to = buffer_length_bp * 2)) %>% 
-      dplyr::mutate(coverage = NA) %>% 
-      left_join(result_df,
-                by = c("library", "seqid", "strand", "feature", "rel_position"),
-                suffix = c("_df1", "_df2")) %>%
-      mutate(
-        coverage = coalesce(coverage_df1, coverage_df2),
-        coverage = coalesce(coverage, 0)
-      ) %>%
-      select(!all_of(c("coverage_df1", "coverage_df2")))
-  }
-  
-  if (summarise_by_position == TRUE) {
-    result_df <- result_df %>% 
-      group_by(library, rel_position) %>% 
-      dplyr::reframe(coverage = mean(coverage),
-                     .groups = "keep")
-  }
-  return(result_df)
-}
-```
-
-```{r plot-absolute-position-coverage}
-
-plot_position_coverage <- function(df, palette_vals, plot_type = "smooth") {
-  if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
-    stop("Invalid plot type")
-
-  plt <- df %>% 
-    ggplot(aes(
-      x = rel_position,
-      y = coverage,
-      group = library
-    )) +
-    ggplot2::annotate("text",
-                      x = -100,
-                      y = 1.3,
-                      label = "TSS") +
-    ggplot2::annotate("text",
-                      x = 1100,
-                      y = 1.3,
-                      label = "TTS") +
-    ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
-                        linetype = "dashed") +
-    ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
-                        linetype = "dashed") +
-    ggplot2::facet_grid(rows = vars(subunit)) +
-    ggplot2::coord_cartesian(clip = 'on',
-                             ylim = c(1, 1.3)) +
-    ggplot2::scale_colour_manual(values = palette_vals) +
-    ggplot2::guides(colour = guide_legend(title = "")) +
-    ggplot2::scale_x_continuous(
-      breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
-      labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
-    ) +
-    ggbreak::scale_x_break(
-      breaks = c(buffer_length_bp, buffer_length_bp)
-    ) +
-    labs(x = "",
-         y = "Number of Ty1\ninsertions (coverage)") +
-    theme_bw() +
-    theme(plot.margin = unit(c(2,1,1,1), "lines"))
-  
-  if (plot_type == "smooth") {
-    plt <- plt +
-      geom_smooth(se = FALSE,
-                  colour = "black",
-                  method = "gam",
-                  formula = y ~ s(x, bs = "cs"),
-                  level = 0.95,
-                  linewidth = 2) +
-      geom_smooth(se = FALSE,
-                  method = "gam",
-                  formula = y ~ s(x, bs = "cs"),
-                  level = 0.95,
-                  aes(colour = library),
-                  linewidth = 1.5)
-  }
-  else if (plot_type == "line") {
-    plt <- plt +
-      geom_line(colour = "black",
-                linewidth = 2) +
-      geom_line(aes(colour = library),
-                linewidth = 1.5)
-  }
-  else if (plot_type == "bar") {
-    plt <- plt +
-      geom_bar(
-        colour = "black",
-        aes(fill = library),
-        stat = "identity"
-      )
-  }
-  # else if (plot_type == "density") {
-  #   plt <- plt +
-  #     geom_density(
-  #       aes(fill = library,
-  #           x = rel_position,
-  #           y = coverage),
-  #       inherit.aes = FALSE
-  #     )
-  # }
-  else {
-    stop("Unimplemented plot type.")
-  }
-  return(plt)
-}
-
-rpii.cov_df %>%
-  prep_position_wise_feature_coverage_df(rpii.gene_df,
-                                         min_gene_coverage = 5,
-                                         add_zero_coverage_positions = FALSE) %>%
-  extract_metadata_from_library_names() %>%
-  filter(
-    subunit %in% c("RPC34", "RPC53", "RPC160"),
-    sugar == "Galactose"
-  ) %>%
-  plot_position_coverage(plot_type = "smooth",
-                         palette_vals = metadata_palette_list[["library"]])
-  
-```
-
-```{r plot-relative-position-coverage}
-
-rp2.cov_df %>% 
-  
-
-```
-
 # Appendix
 
 ## Ty1 insertion quantification at tRNA genes
@@ -1021,7 +1105,8 @@ The figure above shows that there is less differentiation between the different 
 ```{r plot-uniq-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library - for unambiguous alignments. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Alignments that mapped ambiguously to multiple regions were removed."}
 hm.uniq_cov_df <- load_genome_coverage_data_frame(file_path = p.hm.uniq_cov_file,
                                                   blackout_df = feature_filter_df,
-                                                  neighbourhoods = feature_neighbourhood_list) %>%
+                                                  neighbourhoods = feature_neighbourhood_list,
+                                                  library_size_df = read_counts_df) %>%
   summarise_coverage_by_feature(library, feature.name)
 
 for (panel in unique(hm.meta_df$subunit)) {
