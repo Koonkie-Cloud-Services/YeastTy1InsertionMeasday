@@ -5,7 +5,8 @@ from subset_features_for_polymerase_analysis import Feature
 
 class TestMain(unittest.TestCase):
     def setUp(self):
-        self.test_bed_out_prefix = "tests/results/test_out"
+        self.test_bed_out_prefix = "tests/results/TestMain"
+        self.nucelosome_xlsx = "../data/input/13059_2018_1398_MOESM2_ESM.xlsx"
         if not os.path.exists(os.path.dirname(self.test_bed_out_prefix)):
             os.makedirs(os.path.dirname(self.test_bed_out_prefix))
         return
@@ -21,6 +22,19 @@ class TestMain(unittest.TestCase):
     def test_main(self):
         from subset_features_for_polymerase_analysis import main
 
+        with self.subTest("Subsetting features from GFF file"):
+            main([
+            "--gff_in",
+            "../data/output/feature_locations/Saccharomyces_cerevisiae_S288C.gff",
+            "--xlsx_in",
+            "../data/input/custom_feature_annotations.xlsx",
+            "--sheet_name",
+            "polymerase_analysis",
+            "--bed_out_prefix",
+            self.test_bed_out_prefix,
+            "--nucleosome_data",
+            self.nucelosome_xlsx])
+
         # with self.subTest("Subsetting features from BED file"):
         #     main([
         #     "--bed_in",
@@ -31,17 +45,35 @@ class TestMain(unittest.TestCase):
         #     "polymerase_analysis",
         #     "--bed_out_prefix",
         #     self.test_bed_out_prefix])
+        return
+    
+class TestNucleosomeIntegration(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = "tests/results/TestNucleosomeIntegration"
+        self.nucelosome_xlsx = "../data/input/13059_2018_1398_MOESM2_ESM.xlsx"
+    
+    def test_load_nucleosome_data(self):
+        from subset_features_for_polymerase_analysis import load_nucleosome_data
 
-        with self.subTest("Subsetting features from GFF file"):
-            main([
-            "--gff_in",
-            "../data/output/feature_locations/Saccharomyces_cerevisiae_S288C.gff",
-            "--xlsx_in",
-            "../data/input/custom_feature_annotations.xlsx",
-            "--sheet_name",
-            "polymerase_analysis",
-            "--bed_out_prefix",
-            self.test_bed_out_prefix])
+        result = load_nucleosome_data(self.nucelosome_xlsx)
+
+        self.assertIsInstance(result, dict)
+        self.assertEqual(len(result), 5542)
+        self.assertEqual(result["YAL068C"].start, 2169)
+        return
+
+    def test_replace_nucleosome_data(self):
+        from subset_features_for_polymerase_analysis import replace_feature_coordinates
+
+        nucleosome_data = {
+            "YAL068C": Feature(featuretype="nucleosome", seqid="chrI", start=2169, end=2269, strand="+"),
+            "YAL069W": Feature(featuretype="nucleosome", seqid="chrI", start=2269, end=2369, strand="+"),
+        }
+        feature = Feature(featuretype="gene", seqid="chrI", start=2000, end=3000, strand="+", id="gene-YAL068C")
+        replace_feature_coordinates(nucleosome_data, [feature])
+
+        self.assertEqual(feature.start, 2169)
+        self.assertEqual(feature.end, 2269)
         return
 
 class TestFilterAdjacentFeatures(unittest.TestCase):

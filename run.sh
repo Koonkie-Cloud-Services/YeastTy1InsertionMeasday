@@ -1,5 +1,17 @@
 #!/bin/bash
 
+# Wrapper function to call a command and exit if it fails
+run_command() {
+    local cmd="$*"
+    echo "Running command: $cmd"
+    eval "$cmd"
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo "Error: Command '$cmd' failed with exit code $exit_code" >&2
+        exit $exit_code
+    fi
+}
+
 working_dir="data"
 
 if [ -z $( which bedtools) ]; then
@@ -30,18 +42,20 @@ done
 python scripts/arabic_to_roman.py $p_i_trna_locations_file $p_o_trna_locations_file
 
 # Convert the GFF features to BED, add upstream+downstream as needed
-python scripts/reformat_genome_features_to_bed.py \
+run_command python scripts/reformat_genome_features_to_bed.py \
 	--gff_in "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.gff" \
 	--bed_out "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed" \
 	--buffer_features "$input_dir/buffer_regions.tsv"
 
-python scripts/subset_features_for_polymerase_analysis.py \
+run_command python scripts/subset_features_for_polymerase_analysis.py \
 	--gff_in "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.gff" \
 	--xlsx_in "${input_dir}/custom_feature_annotations.xlsx" \
 	--bed_out_prefix "${p_o_features_dir}/polymerase_analysis" \
 	--buffer_length_bp 1000 \
 	--adjacent_buffer_length 1500 \
-	--sheet_name "polymerase_analysis"
+	--sheet_name "polymerase_analysis" \
+	--drop_unmatched \
+	--nucleosome_data "${input_dir}/13059_2018_1398_MOESM2_ESM.xlsx"
 
 # Calculate genome coverage for all features
 ln -s $PWD/$input_dir $p_o_coverage_dir

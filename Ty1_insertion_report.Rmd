@@ -294,6 +294,8 @@ plot_position_coverage <- function(df,
                                    palette_vals,
                                    plot_type = "smooth",
                                    label_y_position = 0,
+                                   text_gap_size = 100,
+                                   loess_span = 0.01,
                                    x_gap_size = 20) {
   if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
     stop("Invalid plot type")
@@ -305,31 +307,36 @@ plot_position_coverage <- function(df,
       group = library
     )) +
     ggplot2::annotate("text",
-                      x = -100,
+                      x = 0 - text_gap_size,
                       y = label_y_position,
+                      size = 3,
                       label = "TSS") +
     ggplot2::annotate("text",
-                      x = 1100,
+                      x = 1000 + text_gap_size,
                       y = label_y_position,
+                      size = 3,
                       label = "TTS") +
     ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
                         linetype = "dashed") +
     ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
                         linetype = "dashed") +
     ggplot2::facet_grid(rows = vars(subunit)) +
-    # ggplot2::coord_cartesian(clip = 'on',
-    #                          ylim = c(1, 1.3)) +
+    ggplot2::coord_cartesian(clip = 'on',
+                             ylim = c(0, 1E-5)) +
     ggplot2::scale_colour_manual(values = palette_vals) +
     ggplot2::guides(colour = guide_legend(title = "")) +
     ggplot2::scale_x_continuous(
       breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
       labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
     ) +
+    ggplot2::scale_y_continuous(
+      breaks = c(0, 1E-5)
+    ) +
     # ggbreak::scale_x_break(
     #   breaks = c(buffer_length_bp, buffer_length_bp)
     # ) +
     labs(x = "",
-         y = "Number of Ty1\ninsertions (coverage)") +
+         y = "Relative number of Ty1 insertions\n(normalised coverage)") +
     theme_bw() +
     theme(plot.margin = unit(c(2,1,1,1), "lines"))
   
@@ -339,13 +346,13 @@ plot_position_coverage <- function(df,
                   colour = "black",
                   method = "loess",
                   formula = y ~ x,
-                  span = 0.05,
+                  span = loess_span,
                   level = 0.98,
                   linewidth = 2) +
       geom_smooth(se = FALSE,
                   method = "loess",
                   formula = y ~ x,
-                  span = 0.05,
+                  span = loess_span,
                   level = 0.98,
                   aes(colour = library),
                   linewidth = 1.5)
@@ -373,7 +380,7 @@ plot_position_coverage <- function(df,
     xmin = buffer_length_bp - x_gap_size,
     xmax = buffer_length_bp + x_gap_size,
     ymin = 0,
-    ymax = 1E-5,
+    ymax = 1.5E-5,
     fill = "white",
     colour = "white",
     alpha = 0.8,
@@ -403,7 +410,9 @@ rpii.cov_df %>%
   ) %>%
   plot_position_coverage(plot_type = "smooth",
                          palette_vals = metadata_palette_list[["library"]],
-                         label_y_position = 8E-6)  # 3E-7 when positions with zero reads mapped are included
+                         text_gap_size = 120,
+                         loess_span = 0.05,
+                         label_y_position = 9E-6)  # 3E-7 when positions with zero reads mapped are included
   
 ```
 

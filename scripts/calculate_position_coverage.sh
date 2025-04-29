@@ -2,7 +2,7 @@
 
 if [ "$#" -lt 1 ]; then
     echo "ERROR: unexpected number of arguments provided"
-    echo -e "USAGE:\n$0 <working directory> <features BED> [BAM suffix]"
+    echo -e "USAGE:\n$0 <working directory> <features BED> [BAM suffix] [input directory]"
     exit
 fi
 
@@ -11,7 +11,6 @@ fi
 ##                          ##
 # Define directory paths
 p_working_dir=$1
-p_input_dir="$p_working_dir/input"
 p_output_dir="$p_working_dir/output"
 p_tmp_dir="$p_working_dir/.tmp"
 
@@ -25,6 +24,12 @@ fi
 p_bam_suffix=$3
 if [ -z "$p_bam_suffix" ]; then
 	p_bam_suffix="dupremoved_uniq.sorted"
+fi
+
+if [ -z $4 ]; then
+	p_input_dir="$p_working_dir/input"
+else
+	p_input_dir=$4
 fi
 
 # Input paths
@@ -86,7 +91,7 @@ echo "[INFO] converting arabic to roman chromosome names"
 python scripts/arabic_to_roman.py $p_i_features_file $t_features_file
 
 
-echo "[INFO] creating strand-wise feature files"
+echo "[INFO] creating strand-wise feature files from '$t_features_file'"
 cat $t_features_file |
 	grep '\+$' > $t_pos_features_file
 cat $t_features_file |
@@ -100,8 +105,13 @@ do
 	bedtools sort \
 		-i $tmp_file_path \
 		-g $p_i_chr_lengths_file >$ff
+	if [ $? -ne 0 ]; then
+		echo "[ERROR] unable to sort file '$ff'"
+		exit
+	fi
+	# Remove the temporary file
+	rm $tmp_file_path
 done
-rm $tmp_file_path
 
 echo "[INFO] creating the combined BED file of features"
 cat $t_pos_features_file $t_neg_features_file | \

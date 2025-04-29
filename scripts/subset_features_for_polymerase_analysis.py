@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+import re
 from typing import List, Dict
 import pandas as pd
 from gffutils import FeatureDB as gff_FeatureDB
@@ -112,7 +113,7 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--buffer_length_bp",
-        dest="p_i_buffer_features",
+        dest="p_s_buffer_features",
         type=int,
         default=0,
         required=False,
@@ -120,7 +121,7 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--adjacent_buffer_length",
-        dest="p_i_adjacent_buffer_length",
+        dest="p_s_adjacent_buffer_length",
         type=int,
         default=0,
         required=False,
@@ -132,6 +133,20 @@ def get_options(args=sys.argv[1:]) -> argparse.Namespace:
         type=str,
         required=True,
         help="The name of the sheet in xlsx_in containing feature information",
+    )
+    parser.add_argument(
+        "--nucleosome_data",
+        dest="p_i_nucleosome_data",
+        type=str,
+        required=False,
+        help="The path to the nucleosome data file",
+    )
+    parser.add_argument(
+        "--drop_unmatched",
+        dest="p_s_drop_unmatched",
+        action="store_true",
+        default=False,
+        help="Drop features not matched in the nucleosome data from the output",
     )
     return parser.parse_args(args=args)
 
@@ -191,6 +206,55 @@ def build_chrom_id_index(gff_db: FeatureDB) -> Dict[str, str]:
                 f"Region feature must have a 'Name' attribute.\n{print(ft_inst)}"
             )
     return chrom_id_map
+
+
+def load_nucleosome_data(xlsx_file: str, **kwargs) -> Dict[str, Feature]:
+
+    df = pd.read_excel(xlsx_file, sheet_name=kwargs.get("sheet_name"))
+
+    if isinstance(df, dict):
+        df = pd.concat(df.values(), ignore_index=True)
+
+    feature_dict = {}
+    for index, row in df.iterrows():
+        feature = Feature(
+            featuretype="ORF",
+            seqid=row["Chr"],
+            strand=row["Strand"],
+            start=int(row["TSS"]),
+            end=int(row["TTS"]),
+        )
+        feature_dict[row["ORF"]] = feature
+    return feature_dict
+
+
+def replace_feature_coordinates(
+    nucleosome_data: Dict[str, Feature], features_in: List[Feature]
+) -> List[Feature]:
+    features_out = []
+    for feature in features_in:
+        if not feature.id:
+            continue
+
+        try:
+            orf = re.sub(pattern=r"^(gene|rna)-", repl="", string=feature.id)
+            nucleosome_feature = nucleosome_data[orf]
+            feature.start = nucleosome_feature.start
+            feature.end = nucleosome_feature.end
+            if feature.strand == "-":
+                feature.start, feature.end = (
+                    nucleosome_feature.end, nucleosome_feature.start
+                )
+            features_out.append(feature)
+        except KeyError:
+            # if acc > 0:
+            #     raise RuntimeWarning(
+            #         f"Feature {feature.id} not found in nucleosome data.\n{print(feature)}"
+            #     )
+            pass
+
+    print(f"Replaced {len(features_out)}/{len(features_in)} feature coordinates with nucleosome data")
+    return features_out
 
 
 def match_features_in_db(
@@ -337,7 +401,11 @@ def filter_adjacent_features(
     poison_features = [feat for feat in poison_features if feat.seqid not in skip_chrom]
     query_features = [feat for feat in query_features if feat.seqid not in skip_chrom]
     if len(poison_features) == 0 or len(query_features) == 0:
-        return
+        raise RuntimeError(
+            f"Poison features or query features are empty.\n"
+            f"Poison features: {len(poison_features)}\n"
+            f"Query features: {len(query_features)}"
+        )
 
     # Sort both lists by seqid and start position
     poison_features = sorted(poison_features, key=lambda x: (x.seqid, x.start))
@@ -398,10 +466,17 @@ def main(args=None):
 
         output_bed_path = get_bed_file_name(opts.p_o_bed_prefix, rna_pol)
         feature_set = match_features_in_db(feature_db, feature_set)
+
         if rna_pol == 3:
             prev_features.extend(feature_set)
             feature_set = buffer_features(feature_set, buffer_specs)
         else:
+            if opts.p_i_nucleosome_data:
+                nucleosome_data = load_nucleosome_data(opts.p_i_nucleosome_data)
+                nucl_features = replace_feature_coordinates(nucleosome_data, feature_set)
+                if opts.p_s_drop_unmatched:
+                    feature_set = nucl_features
+
             feature_set = buffer_features(
                 feature_set,
                 buffer_specs,
@@ -410,10 +485,13 @@ def main(args=None):
                 buffer_sep="",
             )
             pre_count = len(feature_set)
+            if pre_count == 0:
+                raise RuntimeError(f"No features found for RNA Pol {rna_pol}.")
+
             feature_set = filter_adjacent_features(
                 prev_features,
                 feature_set,
-                buffer_length=opts.p_i_adjacent_buffer_length,
+                buffer_length=opts.p_s_adjacent_buffer_length,
             )
             post_count = len(feature_set)
             print(f"Filtered {pre_count - post_count} adjacent features")
