@@ -75,6 +75,7 @@ p.hm.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "S
 p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "Saccharomyces_cerevisiae_S288C_coverage_dupremoved_uniq.sorted.bed")
 p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_2_coverage_dupremoved.sorted.bed")
 p.rpii.feature_bed_file <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "polymerase_analysis.RNA_Pol_2_features.bed")
+p.rpiii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_3_coverage_dupremoved.sorted.bed")
 ```
 
 ```{r create-output-directories}
@@ -306,34 +307,32 @@ plot_position_coverage <- function(df,
       y = coverage,
       group = library
     )) +
-    ggplot2::annotate("text",
-                      x = 0 - text_gap_size,
-                      y = label_y_position,
-                      size = 3,
-                      label = "TSS") +
-    ggplot2::annotate("text",
-                      x = 1000 + text_gap_size,
-                      y = label_y_position,
-                      size = 3,
-                      label = "TTS") +
+    # ggplot2::annotate("text",
+    #                   x = 0 - text_gap_size,
+    #                   y = label_y_position,
+    #                   size = 3,
+    #                   label = "TSS") +
+    # ggplot2::annotate("text",
+    #                   x = 1000 + text_gap_size,
+    #                   y = label_y_position,
+    #                   size = 3,
+    #                   label = "TTS") +
     ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
                         linetype = "dashed") +
     ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
                         linetype = "dashed") +
-    ggplot2::facet_grid(rows = vars(subunit)) +
-    ggplot2::coord_cartesian(clip = 'on',
-                             ylim = c(0, 1E-5)) +
+    ggplot2::facet_grid(rows = vars(subunit),
+                        scales = "free") +
     ggplot2::scale_colour_manual(values = palette_vals) +
     ggplot2::guides(colour = guide_legend(title = "")) +
     ggplot2::scale_x_continuous(
       breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
       labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
     ) +
-    ggplot2::scale_y_continuous(
-      breaks = c(0, 1E-5)
-    ) +
-    # ggbreak::scale_x_break(
-    #   breaks = c(buffer_length_bp, buffer_length_bp)
+    # ggplot2::coord_cartesian(clip = 'on',
+    #                          ylim = c(0, 1E-5)) +
+    # ggplot2::scale_y_continuous(
+    #   breaks = c(0, 1E-5)
     # ) +
     labs(x = "",
          y = "Relative number of Ty1 insertions\n(normalised coverage)") +
@@ -416,7 +415,7 @@ rpii.cov_df %>%
   
 ```
 
-```{r plot-gene-coverage-distribution, fig.height=8, fig.width=13}
+```{r plot-gene-coverage-distribution, fig.height=8, fig.width=13, eval=FALSE}
 
 plot_coverage_stacked_barplot <- function(df, palette_vals) {
   df %>% 
@@ -442,24 +441,6 @@ rpii.cov_df %>%
                                          add_zero_coverage_positions = FALSE,
                                          summarise_by_position = FALSE) %>%
   plot_coverage_stacked_barplot(palette_vals = metadata_palette_list[["library"]])
-
-```
-
-```{r plot-raw-gene-coverage-histogram}
-rpii.cov_df %>%
-  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
-  dplyr::rename(
-    "coverage.raw" = coverage,
-    "coverage" = coverage.norm
-  ) %>%
-  prep_position_wise_feature_coverage_df(rpii.gene_df,
-                                         min_gene_coverage = 1E-5,
-                                         min_gene_read_count = 100,
-                                         add_zero_coverage_positions = FALSE,
-                                         summarise_by_position = TRUE) %>%
-  extract_metadata_from_library_names() %>%
-  plot_position_coverage(plot_type = "bar",
-                         palette_vals = metadata_palette_list[["library"]])
 
 ```
 
@@ -926,6 +907,45 @@ low_cov_features <- hm.cov_df %>%
 plot_feature_coverage_bars(
   df = hm.cov_df,
   feature_names = low_cov_features)
+```
+
+## RNA Pol III transcribed genes
+
+```{r load-pol-iii-data}
+rpiii.cov_columns <- c("library", "seqid", "start", "stop", "feature", "strand", "coverage")
+rpiii.cov_df <- readr::read_tsv(file=p.rpiii.cov_file,
+                               col_names = rpiii.cov_columns) %>% 
+  mutate(library = gsub(pattern = "[[:punct:]]",
+                        replacement = '-',
+                        x = library)) %>%
+  filter(feature != "anti-feature") %>%
+  group_by(library, feature) %>% 
+  reframe(coverage = mean(coverage)) %>% 
+  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  dplyr::rename(
+    "coverage.raw" = coverage,
+    "coverage" = coverage.norm
+  )
+```
+
+```{r plot-pol-iii-coverage-heatmaps}
+
+for (panel in unique(hm.meta_df$subunit)) {
+  draw(plot_genome_coverage_heatmap(
+    cov_mat = rpiii.cov_df %>%
+      dplyr::filter(subunit == panel) %>%
+      dplyr::select(tidyselect::all_of(c("feature", "coverage", "library"))) %>% 
+      tidyr::pivot_wider(names_from = "feature",
+                         values_from = "coverage") %>% 
+      tibble::column_to_rownames("library") %>%
+      t(),
+    meta_df = hm.meta_df %>% 
+      dplyr::filter(subunit == panel),
+    annotations = c("strain.type", "sugar"),
+    brewer_palette_name = c("Set1", "Set3"),
+    n_sig_digits = 6
+  ))
+}
 ```
 
 ## tRNA genes

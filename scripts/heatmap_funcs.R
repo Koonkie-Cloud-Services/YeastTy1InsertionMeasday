@@ -316,8 +316,8 @@ plot_genome_coverage_heatmap <- function(cov_mat,
                                          column_labels = "group",
                                          annotations = NULL,
                                          brewer_palette_name = c("Dark2", "Set3"),
-                                         legend_title = "Mean\ncoverage") {
-  n_sig_digits <- 4
+                                         legend_title = "Mean\ncoverage",
+                                         n_sig_digits = 4) {
   hm_legend <- list(
     title = legend_title,
     at = round(c(
