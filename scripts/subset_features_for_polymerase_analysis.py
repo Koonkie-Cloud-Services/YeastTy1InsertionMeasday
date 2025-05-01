@@ -13,6 +13,16 @@ from reformat_genome_features_to_bed import BUFFER_SPEC
 from reformat_genome_features_to_bed import format_feature_as_bed
 
 
+# Define global settings for each RNA polymerase
+RNA_POL_SETTINGS = {
+    3: {
+        "feature_attribute": "id",
+    },
+    2: {
+        "feature_attribute": "featuretype",
+    },
+}
+
 class Feature(gff_Feature):
     def __init__(
         self,
@@ -39,10 +49,19 @@ class Feature(gff_Feature):
 
         return
 
-    def to_bed(self):
-        return (
-            f"{self.seqid}\t{self.start}\t{self.end}\t{self.featuretype}\t{self.strand}"
-        )
+    def to_bed(self, attr_name="featuretype") -> str:
+        try:
+            ft_name = self.__getattribute__(attr_name)
+        except AttributeError:
+            raise AttributeError(
+                f"Feature {self} does not have the attribute {attr_name}"
+            )
+
+        # Make sure the attribute value is valid
+        if ft_name == "":
+            raise RuntimeError(f"Feature {self} attribute '{attr_name}' is empty.\n")
+
+        return f"{self.seqid}\t{self.start}\t{self.end}\t{ft_name}\t{self.strand}"
 
     def has_coordinates(self) -> bool:
         return self.start >= 0 and self.end > 1 and self.seqid != ""
@@ -167,6 +186,7 @@ def load_target_feature_info(
     p_i_xlsx: str, p_i_sheet_name: str
 ) -> Dict[str, List[Feature]]:
     target_features = {}
+    strand_map = {1: "+", -1: "-", "positive": "+", "negative": "-"}
     df = pd.read_excel(p_i_xlsx, sheet_name=p_i_sheet_name)
     for index, row in df.iterrows():
         if not pd.isna(row["Attribute.name"]):
@@ -187,6 +207,9 @@ def load_target_feature_info(
                 end=int(row["Stop"]),
                 featuretype=row["Feature.name"],
             )
+
+        if feature.strand in strand_map:
+            feature.strand = strand_map.get(feature.strand)
         try:
             target_features[row["RNA.Polymerase"]].append(feature)
         except KeyError:
@@ -243,7 +266,8 @@ def replace_feature_coordinates(
             feature.end = nucleosome_feature.end
             if feature.strand == "-":
                 feature.start, feature.end = (
-                    nucleosome_feature.end, nucleosome_feature.start
+                    nucleosome_feature.end,
+                    nucleosome_feature.start,
                 )
             features_out.append(feature)
         except KeyError:
@@ -253,7 +277,9 @@ def replace_feature_coordinates(
             #     )
             pass
 
-    print(f"Replaced {len(features_out)}/{len(features_in)} feature coordinates with nucleosome data")
+    print(
+        f"Replaced {len(features_out)}/{len(features_in)} feature coordinates with nucleosome data"
+    )
     return features_out
 
 
@@ -341,13 +367,14 @@ def write_features_to_bed_file(
     chrom_prefix = kwargs.get("chrom_prefix", "chr")
     chrom_skip = kwargs.get("chrom_skip", ["MT"])
     chrom_skip.extend([chrom_prefix + chrom for chrom in chrom_skip])
+    attr_name = kwargs.get("attr_name", "featuretype")
     with open(p_o_bed, "w") as f:
         for feature in features_in:
             if feature.seqid in chrom_skip:
                 continue
 
             try:
-                f.write(f"{feature.to_bed()}\n")
+                f.write(f"{feature.to_bed(attr_name)}\n")
             except AttributeError:
                 f.write(f"{format_feature_as_bed(feature)}\n")
     return
@@ -459,10 +486,13 @@ def main(args=None):
     )
 
     prev_features = []
-    for rna_pol in [3, 2]:
+    for rna_pol, settings in RNA_POL_SETTINGS.items():
         feature_set = target_features.get(rna_pol)
         if feature_set is None:
-            continue
+            raise RuntimeError(
+                f"RNA polymerase {rna_pol} not found in the input file.\n"
+                f"Please check the input file and try again."
+            )
 
         output_bed_path = get_bed_file_name(opts.p_o_bed_prefix, rna_pol)
         feature_set = match_features_in_db(feature_db, feature_set)
@@ -470,10 +500,20 @@ def main(args=None):
         if rna_pol == 3:
             prev_features.extend(feature_set)
             feature_set = buffer_features(feature_set, buffer_specs)
+            # Fix feature IDs for RNA Pol III features specifically
+            for feature in feature_set:
+                if feature.id == "":
+                    feature.id = feature.featuretype
+                elif re.match(pattern=r"^(gene|rna)-", string=feature.id):
+                    feature.id = feature.featuretype
+                else:
+                    pass
         else:
             if opts.p_i_nucleosome_data:
                 nucleosome_data = load_nucleosome_data(opts.p_i_nucleosome_data)
-                nucl_features = replace_feature_coordinates(nucleosome_data, feature_set)
+                nucl_features = replace_feature_coordinates(
+                    nucleosome_data, feature_set
+                )
                 if opts.p_s_drop_unmatched:
                     feature_set = nucl_features
 
@@ -496,7 +536,11 @@ def main(args=None):
             post_count = len(feature_set)
             print(f"Filtered {pre_count - post_count} adjacent features")
 
-        write_features_to_bed_file(output_bed_path, feature_set)
+        write_features_to_bed_file(
+            p_o_bed=output_bed_path,
+            features_in=feature_set,
+            attr_name=settings["feature_attribute"],
+        )
     return
 
 
