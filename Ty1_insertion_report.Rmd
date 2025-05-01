@@ -297,7 +297,8 @@ plot_position_coverage <- function(df,
                                    label_y_position = 0,
                                    text_gap_size = 100,
                                    loess_span = 0.01,
-                                   x_gap_size = 20) {
+                                   x_gap_size = 20,
+                                   free_y_scale = FALSE) {
   if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
     stop("Invalid plot type")
 
@@ -307,37 +308,44 @@ plot_position_coverage <- function(df,
       y = coverage,
       group = library
     )) +
-    # ggplot2::annotate("text",
-    #                   x = 0 - text_gap_size,
-    #                   y = label_y_position,
-    #                   size = 3,
-    #                   label = "TSS") +
-    # ggplot2::annotate("text",
-    #                   x = 1000 + text_gap_size,
-    #                   y = label_y_position,
-    #                   size = 3,
-    #                   label = "TTS") +
     ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
                         linetype = "dashed") +
     ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
                         linetype = "dashed") +
-    ggplot2::facet_grid(rows = vars(subunit),
-                        scales = "free") +
     ggplot2::scale_colour_manual(values = palette_vals) +
     ggplot2::guides(colour = guide_legend(title = "")) +
     ggplot2::scale_x_continuous(
       breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
       labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
     ) +
-    # ggplot2::coord_cartesian(clip = 'on',
-    #                          ylim = c(0, 1E-5)) +
-    # ggplot2::scale_y_continuous(
-    #   breaks = c(0, 1E-5)
-    # ) +
     labs(x = "",
          y = "Relative number of Ty1 insertions\n(normalised coverage)") +
     theme_bw() +
     theme(plot.margin = unit(c(2,1,1,1), "lines"))
+  
+  if (free_y_scale == TRUE) {
+    plt <- plt +
+      ggplot2::facet_grid(rows = vars(subunit),
+                        scales = "free")
+  } else {
+    plt <- plt +
+      ggplot2::facet_grid(rows = vars(subunit)) +
+      ggplot2::annotate("text",
+                        x = 0 - text_gap_size,
+                        y = label_y_position,
+                        size = 3,
+                        label = "TSS") +
+      ggplot2::annotate("text",
+                        x = 1000 + text_gap_size,
+                        y = label_y_position,
+                        size = 3,
+                        label = "TTS") +
+      ggplot2::coord_cartesian(clip = 'on',
+                               ylim = c(0, 1E-5)) +
+      ggplot2::scale_y_continuous(
+        breaks = c(0, 1E-5)
+      )
+  }
   
   if (plot_type == "smooth") {
     plt <- plt +
@@ -408,6 +416,7 @@ rpii.cov_df %>%
     sugar == "Galactose"
   ) %>%
   plot_position_coverage(plot_type = "smooth",
+                         free_y_scale = TRUE,
                          palette_vals = metadata_palette_list[["library"]],
                          text_gap_size = 120,
                          loess_span = 0.05,
