@@ -3,31 +3,19 @@
 ##
 #  FUNCTION DEFINITIONS
 ##
-run_command() {
-    local cmd="$*"
-    echo "Running command: $cmd"
-    eval "$cmd"
-    local exit_code=$?
-    if [ $exit_code -ne 0 ]; then
-        log_message error "Command '$cmd' failed with exit code $exit_code" >&2
-        exit $exit_code
-    fi
-}
-
 log_message() {
   local level="$1"
   shift
   local message="$@"
-
   case "$level" in
     info)
-      echo "INFO: $message"
+      echo "INFO: $message" >&2
       ;;
     warning)
-      echo "WARNING: $message"
+      echo "WARNING: $message" >&2
       ;;
     error)
-      echo "ERROR: $message"
+      echo "ERROR: $message" >&2
       ;;
     debug)
       echo "DEBUG: $message" >>$LOG_FILE_PATH
@@ -36,6 +24,17 @@ log_message() {
       echo "INVALID LEVEL: $message"
       ;;
   esac
+}
+
+run_command() {
+    local cmd="$*"
+    log_message debug "Running command: $cmd"
+    eval "$cmd"
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        log_message error "Command '$cmd' failed with exit code $exit_code" >&2
+        exit $exit_code
+    fi
 }
 
 find_sample_names() {
@@ -73,55 +72,58 @@ process_sample() {
 		exit
 	fi
 
-	echo $'\tRemoving AACA sequence'
+	log_message info $'\tRemoving AACA sequence'
 	run_command cutadapt -g "^AACA" \
 		-o "${working_dir}/${sample_id}.5primetrimmed.fastq" \
 		--discard-untrimmed \
 		"${fastq_r1}" \
-		> "${working_dir}/${sample_id}.ssbstats.txt"
+		1> "${working_dir}/${sample_id}.ssbstats.txt"
 
-	echo $'\tRemoving the adapter'
+	log_message info $'\tRemoving the adapter'
 	run_command cutadapt -a "TAGTCCCTTAAGCGGAGCCCTATAG" \
 		-o "${working_dir}/${sample_id}.5primetrimmed.3primetrimmed.fastq" \
 		-m 20 \
 		"${working_dir}/${sample_id}.5primetrimmed.fastq" \
 		> "${working_dir}/${sample_id}.adapterstats.txt"
 
-	echo $'\tBWA mapping'
-	run_command bwa mem "$bwa_index" -M -t "$nslots" -R "@RG\tID:${sample_id}\tSM:${sample_id}\tPL:illumina" \
-		"${working_dir}/${sample_id}.5primetrimmed.3primetrimmed.fastq" > "${working_dir}/${sample_id}.sam"
+	log_message info $'\tBWA mapping'
+	run_command bwa mem "$bwa_index" -M -t "$nslots" \
+		-R "'@RG\tID:${sample_id}\tSM:${sample_id}\tPL:illumina'" \
+		"${working_dir}/${sample_id}.5primetrimmed.3primetrimmed.fastq" \
+		-o "${working_dir}/${sample_id}.sam"
 
-	echo $'\tSamtools sorting BAM'
+	log_message info $'\tSamtools sorting BAM'
 	run_command samtools view -F 0x900 -@ "$nslots" -ubS "${working_dir}/${sample_id}.sam" | \
-		samtools sort - -@ "$nslots" -T "${working_dir}/${sample_id}.sorted" -O BAM -o "${working_dir}/${sample_id}.sorted.bam"
+		samtools sort - -@ "$nslots" -T "${working_dir}/${sample_id}.sorted" \
+		-O BAM -o "${working_dir}/${sample_id}.sorted.bam"
 
-	echo $'\tIndexing BAM'
+	log_message info $'\tIndexing BAM'
 	run_command samtools index "${working_dir}/${sample_id}.sorted.bam"
 	run_command samtools flagstat "${working_dir}/${sample_id}.sorted.bam" > "${working_dir}/${sample_id}.sorted.bam.flagstat"
 
-	echo $'\tRemoving duplicates to make a mapped.dedup.bam'
+	log_message info $'\tRemoving duplicates to make a mapped.dedup.bam'
 	local tmpdir="${working_dir}/picardtmp/"
 	rm -rf "$tmpdir"
 	mkdir "$tmpdir"
-	run_command java -jar "$EBROOTPICARD/picard.jar" MarkDuplicates \
+	run_command picard MarkDuplicates \
 		I="${working_dir}/${sample_id}.sorted.bam" \
 		REMOVE_DUPLICATES=true TMP_DIR="$tmpdir" \
 		M="${working_dir}/${sample_id}_uniq_DuplicateResults.txt" \
 		O="${working_dir}/${sample_id}_dupremoved.sorted.bam"
 
-	echo $'\tIndexing deduplicated BAM'
+	log_message info $'\tIndexing deduplicated BAM'
 	run_command samtools index "${working_dir}/${sample_id}_dupremoved.sorted.bam"
 	run_command samtools flagstat "${working_dir}/${sample_id}_dupremoved.sorted.bam" > "${working_dir}/${sample_id}_dupremoved.sorted.bam.flagstat"
 
-	echo $'\tRemoving non-unique mapping reads'
+	log_message info $'\tRemoving non-unique mapping reads'
 	run_command samtools view -q 30 "${working_dir}/${sample_id}.sorted.bam" -o "${working_dir}/${sample_id}_uniq.sorted.bam"
 	run_command samtools index "${working_dir}/${sample_id}_uniq.sorted.bam"
 	run_command samtools flagstat "${working_dir}/${sample_id}_uniq.sorted.bam" > "${working_dir}/${sample_id}_uniq.sorted.bam.flagstat"
 
-	echo $'\tPicard MarkDuplicates for unique reads'
+	log_message info $'\tPicard MarkDuplicates for unique reads'
 	rm -rf "$tmpdir"
 	mkdir "$tmpdir"
-	run_command java -jar "$EBROOTPICARD/picard.jar" MarkDuplicates \
+	run_command picard MarkDuplicates \
 		I="${working_dir}/${sample_id}_uniq.sorted.bam" \
 		REMOVE_DUPLICATES=true TMP_DIR="$tmpdir" \
 		M="${working_dir}/${sample_id}_uniq_DuplicateResults.txt" \
@@ -129,6 +131,12 @@ process_sample() {
 
 	run_command samtools index "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam"
 	run_command samtools flagstat "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam" > "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam.flagstat"
+
+	log_message info $'\tCleaning up intermediate files'
+	rm -f "${working_dir}/${sample_id}.sam"
+	rm -f "${working_dir}/${sample_id}.5primetrimmed.fastq"
+	rm -f "${working_dir}/${sample_id}.5primetrimmed.3primetrimmed.fastq"
+	rm -rf "$tmpdir"
 
 	echo "Sample $sample_id processing completed at $(date)"
 	echo "----------------------------------------"
@@ -180,7 +188,7 @@ OUTPUT_DIR="${WORKING_DIR}/data/output"
 ALIGN_DIR="${OUTPUT_DIR}/alignments"
 # Hard-coded parameters
 REF_GENOME_URL="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/045/GCF_000146045.2_R64/GCF_000146045.2_R64_genomic.fna.gz"
-BWA_INDEX="${GENOME_DIR}/S288C_reference_sequence_R64-2-1_20150113.fsa"
+BWA_INDEX="${GENOME_DIR}/reference_genome"
 
 # Check if required executables are available
 for tool in cutadapt bwa samtools; do
@@ -205,7 +213,7 @@ for sample in "${SAMPLE_NAMES[@]}"; do
 done
 
 # Check if BWA index file exists
-if [[ ! -f "$BWA_INDEX" ]]; then
+if [[ ! -f "$BWA_INDEX.sa" ]]; then
 	GENOME_DIR="$OUTPUT_DIR/genome"
 	# Update BWA_INDEX variable to point to the newly created index
 	BWA_INDEX="${GENOME_DIR}/reference_genome"
@@ -220,6 +228,12 @@ fi
 
 for sample_id in "${SAMPLE_NAMES[@]}"; do
 	log_message info "Processing sample: $sample_id"
+	# Skip processing if the output file already exists
+	output_file="${ALIGN_DIR}/${sample_id}_dupremoved_uniq.sorted.bam"
+	if [[ -f "$output_file" ]]; then
+		log_message info "Output file for sample $sample_id already exists. Skipping processing."
+		continue
+	fi
 	process_sample "$sample_id" "$ALIGN_DIR" "$RAW_FASTQ_DIR" "$BWA_INDEX" $N_CORE
 done
 
