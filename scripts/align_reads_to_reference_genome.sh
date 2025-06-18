@@ -206,6 +206,10 @@ log_message info "Primary Analysis Started"
 date
 
 SAMPLE_NAMES=($(find_sample_names "${RAW_FASTQ_DIR}"))
+if [[ ${#SAMPLE_NAMES[@]} -eq 0 ]]; then
+	log_message error "No sample names found. Exiting."
+	exit 1
+fi
 log_message info "Number of samples found: ${#SAMPLE_NAMES[@]}"
 log_message info "Found sample names:"
 for sample in "${SAMPLE_NAMES[@]}"; do
