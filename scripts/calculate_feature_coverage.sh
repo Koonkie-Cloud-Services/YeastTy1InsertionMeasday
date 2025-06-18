@@ -26,9 +26,10 @@ if [ ! -f "$p_i_features_file" ]; then
 	echo "ERROR: input features file '${p_i_features_file}' doesn't exist"
 	exit
 fi
+FLOWCELL="2"
 
 # Input paths
-p_i_bam_dir="$p_input_dir/BAMs"
+p_i_bam_dir="$p_output_dir/alignments"
 p_i_features_dir="$p_input_dir/feature_locations"
 p_i_sample_name_map="$p_input_dir/hiseq_sample_id_map.tsv"
 p_i_chr_lengths_file="$p_input_dir/chromosome_lengths.tsv"
@@ -119,7 +120,7 @@ echo "[INFO] creating the combined BED file of features and anti-features"
 cat $t_pos_features_file $t_neg_features_file | \
 	bedtools sort -g $p_i_chr_lengths_file > $p_o_features_file
 
-while IFS=$'\t' read -r sampleId strainId sugar uniqueId prefix fastqName || [ -n "$fastqName" ]
+while IFS=$'\t' read -r sampleId strainId sugar uniqueId runId barcode libraryName fastqName || [ -n "$fastqName" ]
 do
 	# Skip the header line
 	if [[ $sampleId == "sampleId" ]]; then
@@ -127,7 +128,7 @@ do
 	fi
 
 	# Define file paths for sample
-	old_bam="${p_i_bam_dir}/${prefix}_${p_bam_suffix}.bam"
+	old_bam="${p_i_bam_dir}/${runId}_${FLOWCELL}_1_${barcode}_${p_bam_suffix}.bam"
 	new_bam_path="${p_o_bam_dir}/${uniqueId}_${p_bam_suffix}.bam"
 	bed_path="${p_o_bed_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"
 
