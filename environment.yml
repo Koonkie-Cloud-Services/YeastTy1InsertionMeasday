@@ -1,0 +1,18 @@
+name: komb
+channels:
+  - bioconda
+dependencies:
+# Bioinformatic software packages
+  - bwa
+  - samtools
+  - cutadapt
+  - picard
+  - bedtools
+  - gffutils
+  - pandas
+  - openpyxl
+  - r-rmarkdown
+  - r-tidyverse
+  - r-gggenes
+  - r-cowplot
+  - r-here
