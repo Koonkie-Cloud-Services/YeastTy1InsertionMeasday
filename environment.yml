@@ -16,3 +16,8 @@ dependencies:
   - r-gggenes
   - r-cowplot
   - r-here
+  - r-kableextra
+  - r-vegan
+  - r-viridis
+  - r-writexl
+  - bioconductor-complexheatmap

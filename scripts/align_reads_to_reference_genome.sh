@@ -147,20 +147,20 @@ process_sample() {
 ##
 
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then
-	echo -e "Usage: $0 <working_directory>"
+	echo -e "Usage: $0 <working_directory> [<number_of_cores>]"
 	
 	echo """
 Description:
 	This script aligns reads to a reference genome and performs various processing steps.
 
 	The working directory should contain the following structure:
-		<working_directory>/data/input/FASTQ - Contains .fastq.gz files
-		<working_directory>/data/input/genome - Contains the reference genome
-		<working_directory>/data/output - Output directory for results
+		<working_directory>/input/FASTQ - Contains .fastq.gz files
+		<working_directory>/input/genome - Contains the reference genome
+		<working_directory>/output - Output directory for results
 
 	The script will create the following directories:
-		<working_directory>/data/output/alignments - For alignment results
-		<working_directory>/data/output/genome - For the reference genome (if none provided)
+		<working_directory>/output/alignments - For alignment results
+		<working_directory>/output/genome - For the reference genome (if none provided)
 	"""
 	exit 0
 fi
@@ -180,11 +180,11 @@ if [ -z "$N_CORE" ]; then
 fi
 
 # Inputs
-INPUT_DIR="${WORKING_DIR}/data/input"
+INPUT_DIR="${WORKING_DIR}/input"
 RAW_FASTQ_DIR="${INPUT_DIR}/FASTQ"
 GENOME_DIR="${INPUT_DIR}/genome"
 # Outputs
-OUTPUT_DIR="${WORKING_DIR}/data/output"
+OUTPUT_DIR="${WORKING_DIR}/output"
 ALIGN_DIR="${OUTPUT_DIR}/alignments"
 # Hard-coded parameters
 REF_GENOME_URL="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/045/GCF_000146045.2_R64/GCF_000146045.2_R64_genomic.fna.gz"
@@ -218,16 +218,26 @@ done
 
 # Check if BWA index file exists
 if [[ ! -f "$BWA_INDEX.sa" ]]; then
-	GENOME_DIR="$OUTPUT_DIR/genome"
+	NEW_GENOME_DIR="$OUTPUT_DIR/genome"
 	# Update BWA_INDEX variable to point to the newly created index
 	BWA_INDEX="${GENOME_DIR}/reference_genome"
-	mkdir -p "$GENOME_DIR"
+	mkdir -p "$NEW_GENOME_DIR"
 
 	log_message info "Downloading reference genome..."
-	run_command curl -o "${GENOME_DIR}/reference_genome.fna.gz" "$REF_GENOME_URL"
+	run_command curl -o "${NEW_GENOME_DIR}/reference_genome.fna.gz" "$REF_GENOME_URL"
+
+	log_message info "Renaming chromosomes in reference genome..."
+	gunzip -c "${NEW_GENOME_DIR}/reference_genome.fna.gz" | \
+		seqkit grep -v -p NC_001224.1 | \
+		sed 's/.*chromosome/>chr/g' | \
+		awk -F, '{ print $1 }' | \
+		sed 's/ //g' | \
+		gzip > "${NEW_GENOME_DIR}/reference_genome.chr.fna.gz"
+	rm "${NEW_GENOME_DIR}/reference_genome.fna.gz"
 
 	log_message info "Building BWA index..."
-	run_command bwa index -p "${BWA_INDEX}" "${GENOME_DIR}/reference_genome.fna.gz"
+	run_command bwa index -p "${BWA_INDEX}" "${NEW_GENOME_DIR}/reference_genome.chr.fna.gz"
+	
 fi
 
 for sample_id in "${SAMPLE_NAMES[@]}"; do

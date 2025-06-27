@@ -13,30 +13,46 @@ run_command() {
 }
 
 working_dir="data"
+N_CPUS=4
 
 if [ -z $( which bedtools) ]; then
 	echo "[ERROR] bedtools executable not in path"
 	exit
 fi
 
+if [ ! -d $input_dir ]; then
+	echo "[ERROR] input directory '$input_dir' doesn't exist"
+	exit 1
+fi
+
 input_dir="$working_dir/input"
 output_dir="$working_dir/output"
+p_o_bam_dir="${output_dir}/alignments"
 p_o_coverage_dir="${output_dir}/genome_coverage"
 p_o_features_dir="${output_dir}/feature_locations"
 p_i_trna_locations_file="$input_dir/trna_regions.edited.bed"
 p_o_trna_locations_file="$p_o_features_dir/trna_regions.bed"
 
-if [ -d $output_dir ]; then
-	rm -r $output_dir
+if [ ! -d $output_dir ]; then
+	mkdir $output_dir
 fi
-mkdir $output_dir
 
 for dir_path in $p_o_features_dir $p_o_coverage_dir
 do
-	mkdir $dir_path
+	if [ ! -d $dir_path ]; then
+		mkdir $dir_path
+	fi
 done
 
-# Download input data from NCBI
+# The following command writes BAM files to $output_dir/alignments
+./scripts/align_reads_to_reference_genome.sh $working_dir $N_CPUS
+ln -s $PWD/$p_o_bam_dir $input_dir/
+if [ ! -d "$input_dir/alignments" ] || [ -z "$(ls -A $input_dir/alignments/*.bam 2>/dev/null)" ]; then
+	echo "[ERROR] No BAM files found in '$input_dir/alignments'."
+	exit 1
+fi
+
+# Download genome annotation files from NCBI
 ./scripts/download_reference_genome_data.sh $p_o_features_dir
 
 python scripts/arabic_to_roman.py $p_i_trna_locations_file $p_o_trna_locations_file

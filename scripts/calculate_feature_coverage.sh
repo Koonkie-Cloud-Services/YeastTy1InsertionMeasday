@@ -29,7 +29,7 @@ fi
 FLOWCELL="2"
 
 # Input paths
-p_i_bam_dir="$p_output_dir/alignments"
+p_i_bam_dir="$p_input_dir/alignments"
 p_i_features_dir="$p_input_dir/feature_locations"
 p_i_sample_name_map="$p_input_dir/hiseq_sample_id_map.tsv"
 p_i_chr_lengths_file="$p_input_dir/chromosome_lengths.tsv"
@@ -66,9 +66,8 @@ if [ ! -d $p_input_dir ]; then
 fi
 
 if [ -f $p_o_coverage_file ]; then
-	echo "[WARNING] removing output file '$p_o_coverage_file'"
-	rm $p_o_coverage_file
-        touch $p_o_coverage_file
+	echo "[WARNING] output file '$p_o_coverage_file' already exists. Returning existing file."
+	exit 0
 fi
 
 if [ -d $p_tmp_dir ]; then
@@ -173,6 +172,10 @@ do
 		$p_o_coverage_file
 done<$p_i_sample_name_map
 
+if [ ! -s "$p_o_coverage_file" ]; then
+	echo "[ERROR] Output file '$p_o_coverage_file' is empty or does not exist."
+	exit 1
+fi
 
 # TODO: summarise number of reads in BAMs and BEDs
 
