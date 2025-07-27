@@ -99,10 +99,10 @@ load_coverage_data_frame <- function(file_path, index, ...) {
     return()
 }
 
-normalise_sequencing_library_coverage <- function(df, read_counts) {
+normalise_sequencing_library_coverage <- function(df, read_counts, read_norm_type) {
   df %>% 
     left_join(read_counts %>% 
-                filter(norm_type == p.read_norm_type),
+                filter(norm_type == read_norm_type),
               by = "library") %>%
     mutate(coverage.norm = coverage/seq_library_size) %>% 
     select(!all_of(c("seq_library_size", "norm_type"))) %>% 

@@ -28,6 +28,7 @@ fi
 input_dir="$working_dir/input"
 output_dir="$working_dir/output"
 p_o_bam_dir="${output_dir}/alignments"
+p_o_aln_dir="${output_dir}/merged_alignments"
 p_o_coverage_dir="${output_dir}/genome_coverage"
 p_o_features_dir="${output_dir}/feature_locations"
 p_i_trna_locations_file="$input_dir/trna_regions.edited.bed"
@@ -46,7 +47,8 @@ done
 
 # The following command writes BAM files to $output_dir/alignments
 ./scripts/align_reads_to_reference_genome.sh $working_dir $N_CPUS
-ln -s $PWD/$p_o_bam_dir $input_dir/
+./scripts/merge_bam_files.sh $p_o_bam_dir $input_dir/BAMs
+ln -s $PWD/$p_o_aln_dir $input_dir/alignments
 if [ ! -d "$input_dir/alignments" ] || [ -z "$(ls -A $input_dir/alignments/*.bam 2>/dev/null)" ]; then
 	echo "[ERROR] No BAM files found in '$input_dir/alignments'."
 	exit 1

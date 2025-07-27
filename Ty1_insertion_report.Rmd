@@ -400,7 +400,8 @@ plot_position_coverage <- function(df,
 ```{r plot-absolute-position-coverage}
 
 rpii.cov_df %>%
-  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  normalise_sequencing_library_coverage(read_counts = read_counts_df,
+                                        read_norm_type = "raw") %>% 
   dplyr::rename(
     "coverage.raw" = coverage,
     "coverage" = coverage.norm
@@ -439,7 +440,8 @@ plot_coverage_stacked_barplot <- function(df, palette_vals) {
 }
 
 rpii.cov_df %>%
-  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  normalise_sequencing_library_coverage(read_counts = read_counts_df,
+                                        read_norm_type = "raw") %>% 
   dplyr::rename(
     "coverage.raw" = coverage,
     "coverage" = coverage.norm
@@ -496,7 +498,8 @@ if (nrow(missing) > 0) {
 ```{r transform-data}
 bt.cov_df <- normalise_sequencing_library_coverage(
   df = bt.cov_df,
-  read_counts = read_counts_df
+  read_counts = read_counts_df,
+  read_norm_type = "raw_f1"
 )
 
 libs_missing <- filter(bt.cov_df, is.na(coverage.norm)) %>% 
@@ -930,7 +933,8 @@ rpiii.cov_df <- readr::read_tsv(file=p.rpiii.cov_file,
   filter(feature != "anti-feature") %>%
   group_by(library, feature) %>% 
   reframe(coverage = mean(coverage)) %>% 
-  normalise_sequencing_library_coverage(read_counts = read_counts_df) %>% 
+  normalise_sequencing_library_coverage(read_counts = read_counts_df,
+                                        read_norm_type = "raw") %>% 
   dplyr::rename(
     "coverage.raw" = coverage,
     "coverage" = coverage.norm

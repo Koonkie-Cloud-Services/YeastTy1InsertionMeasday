@@ -31,7 +31,6 @@ if [ -z $4 ]; then
 else
 	p_input_dir=$4
 fi
-FLOWCELL="2"
 
 # Input paths
 p_i_bam_dir="$p_input_dir/alignments"
@@ -125,7 +124,7 @@ do
 	fi
 
 	# Define file paths for sample
-	old_bam="${p_i_bam_dir}/${runId}_${FLOWCELL}_1_${barcode}_${p_bam_suffix}.bam"
+	old_bam="${p_i_bam_dir}/${runId}_${barcode}_${p_bam_suffix}.bam"
 	new_bam_path="${p_o_bam_dir}/${uniqueId}_${p_bam_suffix}.bam"
 	tmp_bed_path="${p_tmp_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"
 	bed_path="${p_o_bed_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"

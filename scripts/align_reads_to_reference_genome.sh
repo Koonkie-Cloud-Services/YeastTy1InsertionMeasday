@@ -44,7 +44,7 @@ find_sample_names() {
 
 	for file in "${raw_fastq_dir}"/*.fastq.gz; do
 		if [[ -f "$file" ]]; then
-			local sample_name=$(basename "$file" .fastq.gz | sed 's/_100bp.concat_chastity_passed//g')
+			local sample_name=$(basename "$file" .fastq.gz | sed 's/_100bp.concat_chastity_passed.*//g')
 			sample_names+=("$sample_name")
 		fi
 	done
@@ -180,22 +180,23 @@ if [ -z "$N_CORE" ]; then
 fi
 
 # Inputs
-INPUT_DIR="${WORKING_DIR}/input"
-RAW_FASTQ_DIR="${INPUT_DIR}/FASTQ"
-GENOME_DIR="${INPUT_DIR}/genome"
+P_I_INPUT_DIR="${WORKING_DIR}/input"
+P_I_RAW_FASTQ_DIR="${P_I_INPUT_DIR}/FASTQ"
+P_I_GENOME_DIR="${P_I_INPUT_DIR}/genome"
+P_I_SAMPLE_ID_MAP="$P_I_INPUT_DIR/hiseq_sample_id_map.tsv"
 # Outputs
-OUTPUT_DIR="${WORKING_DIR}/output"
-ALIGN_DIR="${OUTPUT_DIR}/alignments"
+P_O_OUTPUT_DIR="${WORKING_DIR}/output"
+P_O_ALIGN_DIR="${P_O_OUTPUT_DIR}/alignments"
 # Hard-coded parameters
 REF_GENOME_URL="https://ftp.ncbi.nlm.nih.gov/genomes/all/GCF/000/146/045/GCF_000146045.2_R64/GCF_000146045.2_R64_genomic.fna.gz"
-BWA_INDEX="${GENOME_DIR}/reference_genome"
+BWA_INDEX="${P_I_GENOME_DIR}/reference_genome"
 
 # Check if required executables are available
 for tool in cutadapt bwa samtools; do
 	command -v $tool >/dev/null 2>&1 || { log_message error "$tool is not installed or not in PATH."; exit 1; }
 done
 
-for dir_path in "$OUTPUT_DIR" "$ALIGN_DIR"; do
+for dir_path in "$P_O_OUTPUT_DIR" "$P_O_ALIGN_DIR"; do
 	if [[ ! -d "$dir_path" ]]; then
 		log_message info "Creating directory: $dir_path"
 		mkdir -p "$dir_path"
@@ -205,7 +206,31 @@ done
 log_message info "Primary Analysis Started"
 date
 
-SAMPLE_NAMES=($(find_sample_names "${RAW_FASTQ_DIR}"))
+# # Combine FASTQ files from the same sample
+# while IFS=$'\t' read -r sampleId strainId sugar uniqueId runId barcode libraryName fastqName || [ -n "$fastqName" ]
+# do
+# 	# Skip the header line
+# 	if [[ $sampleId == "sampleId" ]]; then
+# 		continue
+# 	fi
+# 	# Combine FASTQ files from the same sample
+# 	FASTQ_FILES=("${P_I_RAW_FASTQ_DIR}/${runId}_*${barcode}*.fastq.gz")
+# 	ls ${FASTQ_FILES[@]}
+# 	if [[ ${#FASTQ_FILES[@]} -gt 0 ]]; then
+# 		new_fastq_name="${runId}_${barcode}.fastq.gz"
+# 		if [[ -f "${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}" ]]; then
+# 			log_message info "Merged FASTQ file already exists: ${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}"
+# 			continue
+# 		fi
+# 		log_message info "Combining FASTQ files for sample: $sampleId"
+# 		run_command cat "${FASTQ_FILES[@]}" > "${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}"
+# 		log_message info "Combined FASTQ file created: ${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}"
+# 	else
+# 		log_message warning "No FASTQ files found for sample: $sampleId"
+# 	fi
+# done < "$P_I_SAMPLE_ID_MAP"
+
+SAMPLE_NAMES=($(find_sample_names "${P_I_RAW_FASTQ_DIR}"))
 if [[ ${#SAMPLE_NAMES[@]} -eq 0 ]]; then
 	log_message error "No sample names found. Exiting."
 	exit 1
@@ -218,9 +243,9 @@ done
 
 # Check if BWA index file exists
 if [[ ! -f "$BWA_INDEX.sa" ]]; then
-	NEW_GENOME_DIR="$OUTPUT_DIR/genome"
+	NEW_GENOME_DIR="$P_O_OUTPUT_DIR/genome"
 	# Update BWA_INDEX variable to point to the newly created index
-	BWA_INDEX="${GENOME_DIR}/reference_genome"
+	BWA_INDEX="${P_I_GENOME_DIR}/reference_genome"
 	mkdir -p "$NEW_GENOME_DIR"
 
 	log_message info "Downloading reference genome..."
@@ -243,12 +268,12 @@ fi
 for sample_id in "${SAMPLE_NAMES[@]}"; do
 	log_message info "Processing sample: $sample_id"
 	# Skip processing if the output file already exists
-	output_file="${ALIGN_DIR}/${sample_id}_dupremoved_uniq.sorted.bam"
+	output_file="${P_O_ALIGN_DIR}/${sample_id}_dupremoved_uniq.sorted.bam"
 	if [[ -f "$output_file" ]]; then
 		log_message info "Output file for sample $sample_id already exists. Skipping processing."
 		continue
 	fi
-	process_sample "$sample_id" "$ALIGN_DIR" "$RAW_FASTQ_DIR" "$BWA_INDEX" $N_CORE
+	process_sample "$sample_id" "$P_O_ALIGN_DIR" "$P_I_RAW_FASTQ_DIR" "$BWA_INDEX" $N_CORE
 done
 
 log_message info """
