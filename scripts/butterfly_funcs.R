@@ -183,6 +183,8 @@ plot_butterfly <- function(df,
         colour = "darkgrey",
         fill = "lightgrey"
       )
+  } else if (nucleosome_shape == "none") {
+    plt <- plt
   } else
     stop(paste("Unexpected nucleosome shape:", nucleosome_shape))
   plt <- plt +
@@ -209,7 +211,7 @@ plot_butterfly <- function(df,
       level = level,
       linewidth = .linewidth) +
     xlab("Relative position from TSS (bp)") +
-    ylab("Normalized 5'-most nucleotide coverage") +
+    ylab("Normalized nucleotide coverage") +
     ggplot2::facet_wrap(~subunit, scales = "fixed") +
     scale_x_continuous(breaks = seq(0, 2000, by = 250),
                        labels = seq(-1000, 1000, by=250)) +
@@ -247,3 +249,43 @@ plot_butterfly <- function(df,
   
   return(plt)
 }
+
+
+plot_mutant_and_wildtype_butterfly_helper <- function(df) {
+  panel <- list()
+  i <- 1
+  mutant_libs <- df %>% 
+    filter(strain.type == "Mutant") %>% 
+    pull(library) %>% 
+    unique()
+  
+  for (library_name in mutant_libs) {
+    panel[[i]] <- df %>%
+      dplyr::filter(
+        library == library_name | strain.type == "Wild-type" | sugar == "Dextrose"
+      ) %>%
+      plot_butterfly(df = .,
+                     trna_feat_df = trna_df,
+                     annot_df = nucleosome_position_df,
+                     colour_by = library,
+                     colour_palette = metadata_palette_list[["library"]],
+                     nucleosome_shape = "none",
+                     span = p.span,
+                     level = p.level,
+                     .smooth_se = TRUE,
+                     .annot_size = 4) +
+      theme(
+        strip.background = element_blank(),
+        strip.text = element_blank()
+      )
+    if (i < length(mutant_libs)) {
+      panel[[i]] <- panel[[i]] +
+        theme(axis.title.x = element_blank())
+    }
+    i <- i + 1
+  }
+  
+  cowplot::plot_grid(plotlist = panel,
+                     ncol = 1)
+}
+

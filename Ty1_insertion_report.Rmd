@@ -76,6 +76,7 @@ p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output
 p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_2_coverage_dupremoved.sorted.bed")
 p.rpii.feature_bed_file <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "polymerase_analysis.RNA_Pol_2_features.bed")
 p.rpiii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_3_coverage_dupremoved.sorted.bed")
+p.bt.npc_file <- here(params$data_dir, "input", "41586_2012_BFnature11142_MOESM263_ESM.txt")
 ```
 
 ```{r create-output-directories}
@@ -470,6 +471,8 @@ Loaded `r nrow(trna_df)` tRNA gene locations.
 #   .add_trna_names() %>%
 #   .pivot_coverage_longer_and_aggregate()
 
+libs_for_filtering <- c("rpc160-delta-206211-304-307-Gal")
+
 bt.cov_df <- purrr::imap(
   .x = setNames(
     file.path(p.bt.trna_cov_dir, p.bt.input_trna_coverage_file_names),
@@ -481,7 +484,8 @@ bt.cov_df <- purrr::imap(
     library = gsub(pattern = "[[:punct:]]",
                    replacement = '-',
                    x = library)
-  )
+  ) %>% 
+  filter(! library %in% libs_for_filtering)
 
 missing <- trna_df %>% 
   dplyr::filter(! trna.name %in% unique(dplyr::pull(bt.cov_df, trna.name)))
@@ -1003,44 +1007,18 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 ## Ty1 insertion quantification at tRNA genes
 
+```{r nucleosome-coverage-plot}
+nuc_cov_plt <- read.table(p.bt.npc_file,
+                          header=FALSE,
+                          col.names = c("chr", "position", "NPC", "noiseRatio"))
+# TODO: Calculate positions relative to the tRNA genes
+```
+
 ### RPC160 butterfly plots
 
 These are to show side-by-side comparisons of RPC160 mutants to wild-type 
 
 ```{r rpc160-butterfly-panel, fig.height=14, fig.width=10, fig.cap="Butterfly plots of the RPC160 mutants compared to the wild-type."}
-
-plot_mutant_and_wildtype_butterfly_helper <- function(df) {
-  panel <- list()
-  i <- 1
-  mutant_libs <- df %>% 
-    filter(strain.type == "Mutant") %>% 
-    pull(library) %>% 
-    unique()
-  
-  for (library_name in mutant_libs) {
-    panel[[i]] <- df %>%
-      dplyr::filter(
-        library == library_name | strain.type == "Wild-type" | sugar == "Dextrose"
-      ) %>%
-      plot_butterfly(df = .,
-                     trna_feat_df = trna_df,
-                     annot_df = nucleosome_position_df,
-                     colour_by = library,
-                     colour_palette = metadata_palette_list[["library"]],
-                     span = p.span,
-                     level = p.level,
-                     .smooth_se = TRUE,
-                     .annot_size = 4) +
-      theme(
-        axis.title.y = element_blank(),
-        axis.title.x = element_blank()
-      )
-    i <- i + 1
-  }
-  
-  cowplot::plot_grid(plotlist = panel,
-                     ncol = 1)
-}
 
 bt.cov_df %>%
   filter(subunit == "RPC160") %>%
