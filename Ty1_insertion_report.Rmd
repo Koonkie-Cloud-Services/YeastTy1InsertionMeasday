@@ -40,6 +40,7 @@ library(cowplot)
 require(ComplexHeatmap)
 library(here)
 require(ggbreak)
+require(webshot2)
 ```
 
 ```{r load-scripts}
@@ -471,7 +472,7 @@ Loaded `r nrow(trna_df)` tRNA gene locations.
 #   .add_trna_names() %>%
 #   .pivot_coverage_longer_and_aggregate()
 
-libs_for_filtering <- c("rpc160-delta-206211-304-307-Gal")
+libs_for_filtering <- c("rpc160-delta-206211-304-307-Gal", "rpc160_delta_206211_304_307_Gal")
 
 bt.cov_df <- purrr::imap(
   .x = setNames(
@@ -612,11 +613,12 @@ bt.strand_diff_df %>%
 Ty1 retrotransposons use the RNA polymerase machinery to insert into the genome upstream of the genes transcribed by the respective RNA polymerase enzyme -- in this case, RNA polymerase III. The RNA polymerase III subunits  [RPC160](https://www.yeastgenome.org/locus/RPC160), [RPC53](https://www.yeastgenome.org/locus/S000002309) and [RPC34](https://www.yeastgenome.org/locus/RPC34) are all necessary for transcription. To test which subunits associate with Ty1 retrotransposon's insertion machinery, each of the three subunit-encoding genes were systematically mutated and its consequent impact on insertion was analysed. A baseline of no insertion was inferred from *S. cerevisae* grown on dextrose.
 
 
-```{r mutant-vs-wildtype-insertion-box-plot, fig.cap="Comparison of normalised coverage between the mutant and wild-type strains for each subunit group. For this box-plot, coverage values for only the upstream regions were used as insertion in the downstream was always less. Coverage across all tRNA genes on both strands was was summed, yielding 16 data points for each library: one for each chromosome.", fig.height=5}
+```{r mutant-vs-wildtype-insertion-box-plot, fig.cap="Comparison of normalised coverage between the mutant and wild-type strains for each subunit group. For this box-plot, coverage values for only the upstream regions were used as insertion in the downstream was always less. Coverage across all tRNA genes on both strands was summed, yielding 275 data points for each library: one for each tRNA gene.", fig.height=5}
 bt.cov_df %>% 
-  filter(proximity == "upstream") %>% 
-  group_by(strain.type, sugar, subunit, trna.name, group, chr) %>% 
-  reframe(coverage.sum = sum(coverage.norm)) %>% 
+  filter(proximity == "upstream",
+         subunit != "Other") %>% 
+  group_by(strain.type, sugar, subunit, trna.name, group) %>% 
+  reframe(coverage.sum = sum(coverage.norm)) %>%
   ggplot2::ggplot(ggplot2::aes(x = group,
                                y = coverage.sum,
                                colour = interaction(strain.type, sugar, sep = '+'))) +
@@ -726,9 +728,10 @@ subunit_wise_t_test_helper <- function(df, ...) {
   return(res_cat_df)
 }
 
-bt.cov_df %>%
+bt.cov_t_test_res_table <- bt.cov_df %>%
   filter(sugar == "Galactose",
-         subunit != "Other") %>%
+         subunit != "Other",
+         proximity == "upstream") %>%
   group_by(strain.type, trna.name, library, subunit, group) %>%
   summarise(coverage.sum = sum(coverage.norm),
             .groups = "keep") %>%
@@ -748,6 +751,9 @@ bt.cov_df %>%
     col.names = c("Subunit", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
   ) %>%
   kableExtra::kable_minimal()
+
+bt.cov_t_test_res_table
+kableExtra::save_kable(bt.cov_t_test_res_table, "t-test_tRNA_coverage_table.pdf")
 
 ```
 
@@ -794,6 +800,7 @@ hm.full_cov_df <- load_genome_coverage_data_frame(
 )
 
 hm.cov_df <- hm.full_cov_df %>% 
+  filter(! library %in% libs_for_filtering) %>% 
   summarise_coverage_by_feature(library, feature.name)
 ```
 
@@ -819,6 +826,7 @@ hm.cov_df %>%
 ```{r define-heatmap-metadata}
 hm.meta_df <- hm.cov_df %>% 
   extract_metadata_from_library_names() %>% 
+  filter(! library %in% libs_for_filtering) %>% 
   dplyr::distinct(library, sugar, strain.type, subunit, group) %>% 
   tibble::column_to_rownames("library")
 ```
@@ -971,7 +979,10 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 ```{r subset-tRNA-features-from-coverage-data}
 hm.trna_cov_df <- hm.full_cov_df %>%
-  filter(feature.name == 'tRNA') %>%
+  filter(
+    feature.name == 'tRNA',
+    ! library %in% libs_for_filtering
+  ) %>%
   dplyr::left_join(trna_df,
                    by = c("chr", "end", "strand")) %>% 
   dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
@@ -1003,15 +1014,166 @@ for (panel in unique(hm.meta_df$subunit)) {
 }
 ```
 
+
+```{r calc-trna-coverage-for-mutant-and-wt}
+trna_cov_df <- hm.full_cov_df %>%
+  filter(
+    feature.name == 'tRNA',
+    ! library %in% libs_for_filtering
+  ) %>%
+  extract_metadata_from_library_names() %>%
+  filter(
+    sugar == "Galactose",
+    subunit != "Other"
+  ) %>%
+  dplyr::left_join(trna_df,
+                   by = c("chr", "end", "strand")) %>% 
+  dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
+                                 replacement = '\\1',
+                                 x = trna.name)) %>% 
+  summarise_coverage_by_feature(subunit, strain.type, group, chr, end, strand, trna.name) %>% 
+  dplyr::rename("coverage.sum" = "mean_cov.norm") %>% 
+  dplyr::filter(trna.name != "tX")
+
+trna_cov_df.wt <- trna_cov_df %>% 
+  dplyr::filter(strain.type == "Wild-type") %>%
+  dplyr::mutate(strain.type = "WT") %>%
+  dplyr::distinct(subunit, strain.type, chr, strand, end, trna.name, coverage.sum) %>% 
+  pivot_wider(names_from = "strain.type",
+              values_from = "coverage.sum")
+
+trna_cov_df.mut_vs_wt <- trna_cov_df %>%
+  dplyr::filter(strain.type == "Mutant") %>% 
+  dplyr::distinct(subunit, group, strain.type, chr, strand, end, trna.name, coverage.sum) %>% 
+  pivot_wider(names_from = "strain.type",
+              values_from = "coverage.sum") %>% 
+  left_join(trna_cov_df.wt,
+            by = c("subunit", "chr", "strand", "end", "trna.name")) %>%
+  group_by(subunit, group, trna.name) %>% 
+  summarise(
+    WT.sum = sum(WT),
+    WT.mean = mean(WT),
+    Mutant.sum = sum(Mutant),
+    Mutant.mean = mean(Mutant)
+  ) %>%
+  ungroup() %>% 
+  mutate(diff.abs = abs(Mutant.mean - WT.mean))
+```
+
+```{r plot-mutant-vs-wt-trna-coverages}
+trna_cov_df.mut_vs_wt %>% 
+  ggplot(aes_string(x = "WT.mean", y = "Mutant.mean", fill = "group", label = "trna.name", group = "group")) +
+  geom_point(shape = 21,
+             colour = "black",
+             aes(size = diff.abs)) +
+  geom_smooth(aes(group = group, colour = group),
+              se = FALSE,
+              show.legend = FALSE) +
+  facet_wrap(~subunit) +
+  scale_fill_manual(values = metadata_palette_list$group) +
+  scale_colour_manual(values = metadata_palette_list$group) +
+  ggrepel::geom_label_repel(show.legend = FALSE) +
+  guides(
+    fill = guide_legend(override.aes = list(size = 3)),
+    text = "none",
+    size = "none",
+    label = "none",
+    colour = "none",
+    linetype = "none"
+  ) +
+  labs(x = "Mean tRNA coverage\nWild-type",
+       y = "Mean tRNA coverage\nMutant") +
+  theme_bw() +
+  theme(
+    legend.background = element_rect(fill = NA, colour = NA)
+  )
+```
+
+```{r trna-coverage-t-test}
+trna_cov_df.mut_vs_wt %>% 
+  # dplyr::group_by(subunit) %>%
+  # tidyr::nest() %>%
+  # dplyr::mutate(
+  #   ttest = purrr::map(data,
+  #                      subunit_wise_t_test_helper,
+  #                      paired = FALSE,
+  #                      conf.level = 0.99,
+  #                      alternative = "two.sided")
+  # ) %>%
+  # tidyr::unnest(ttest) %>%
+  # dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
+  # knitr::kable(
+  #   digits = Inf,
+  #   col.names = c("Subunit", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+  # ) %>%
+  # kableExtra::kable_minimal()
+```
+
 # Appendix
 
 ## Ty1 insertion quantification at tRNA genes
 
 ```{r nucleosome-coverage-plot}
-nuc_cov_plt <- read.table(p.bt.npc_file,
-                          header=FALSE,
-                          col.names = c("chr", "position", "NPC", "noiseRatio"))
-# TODO: Calculate positions relative to the tRNA genes
+match_trna_by_position <- function(df1, df2) {
+  # df1: Data frame with at least a 'position' column
+  # df2: Data frame with at least 'start', 'end', and 'trna.name' columns
+  # Returns: df1 with a new column 'matched_trna.name' containing the trna.name from df2 if a match is found, NA otherwise
+
+  # Vector to hold matched trna.names
+  matched_names <- vector("character", nrow(df1))
+  
+  for (i in seq_len(nrow(df1))) {
+    pos <- df1$position[i]
+    chr <- df1$chr[i]
+    
+    # Find matching trna in df2 where position is within 1000 of start and end
+    match_idx <- which((chr == df2$chr) & (pos >= df2$start - 1000) & (pos <= df2$end + 1000))
+    
+    if (length(match_idx) > 0) {
+      # If multiple matches, choose the first one
+      matched_names[i] <- as.character(df2$trna.name[match_idx[1]])
+    } else {
+      matched_names[i] <- NA
+    }
+  }
+  
+  # Add matched_trna.name to df1
+  df1$trna.name <- matched_names
+  return(df1)
+}
+
+nuc_pos_df <- read.table(p.bt.npc_file,
+                         header=FALSE,
+                         col.names = c("chr", "position", "NPC", "noiseRatio"))
+nuc_pos_df %>%
+  filter(
+    noiseRatio > 1,
+    # NPC > 1
+  ) %>%
+  match_trna_by_position(trna_df) %>% 
+  dplyr::filter(!is.na(trna.name)) %>% 
+  dplyr::right_join(trna_df,
+                    by = c("chr", "trna.name")) %>% 
+  dplyr::mutate(
+    rel_position = position - start,
+    rel_position = case_when(
+      strand == '-' ~ (rel_position * -1),
+      .default = rel_position
+    )
+  ) %>%
+  group_by(rel_position) %>% 
+  mutate(
+    npc.mean = mean(NPC),
+    npc.sum = sum(NPC)
+  ) %>% 
+  ggplot(aes(x = rel_position, y = npc.mean)) +
+  geom_smooth(
+    # method = "loess",
+    # formula = y ~ x,
+    # span = 0.1,
+    # level = p.level,
+    se = FALSE
+  )
 ```
 
 ### RPC160 butterfly plots

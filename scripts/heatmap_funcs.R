@@ -317,13 +317,14 @@ plot_genome_coverage_heatmap <- function(cov_mat,
                                          annotations = NULL,
                                          brewer_palette_name = c("Dark2", "Set3"),
                                          legend_title = "Mean\ncoverage",
-                                         n_sig_digits = 4) {
+                                         n_sig_digits = 3) {
+  
+  # hm_legend_breaks <- c(min(cov_mat), mean(cov_mat), max(cov_mat))
+  hm_legend_breaks <- quantile(cov_mat, probs = c(0, 0.5, 0.75, 0.9, 1))
   hm_legend <- list(
     title = legend_title,
-    at = round(c(
-      min(cov_mat),
-      mean(cov_mat),
-      max(cov_mat)),
+    at = round(
+      hm_legend_breaks,
       n_sig_digits)
   )
   
