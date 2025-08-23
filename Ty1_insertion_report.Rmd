@@ -708,6 +708,9 @@ t_test <- function(df, ...) {
 }
 
 subunit_wise_t_test_helper <- function(df, ...) {
+  # Required columns: 
+  # * strain.type: either Mutant or Wild-type
+  # * group: the grouping variable to perform comparisons between MT and WT
   unique_groups <- df %>%
     filter(strain.type != "Wild-type") %>% 
     pull(group) %>% 
@@ -797,7 +800,9 @@ hm.full_cov_df <- load_genome_coverage_data_frame(
   blackout_df = feature_filter_df,
   neighbourhoods = feature_neighbourhood_list,
   library_size_df = read_counts_df
-)
+) %>%
+  select(-ends_with(".y")) %>% 
+  rename_with(~sub(".x$", "", .))
 
 hm.cov_df <- hm.full_cov_df %>% 
   filter(! library %in% libs_for_filtering) %>% 
@@ -942,7 +947,10 @@ rpiii.cov_df <- readr::read_tsv(file=p.rpiii.cov_file,
   mutate(library = gsub(pattern = "[[:punct:]]",
                         replacement = '-',
                         x = library)) %>%
-  filter(feature != "anti-feature") %>%
+  filter(
+    feature != "anti-feature",
+    ! library %in% libs_for_filtering
+  ) %>%
   group_by(library, feature) %>% 
   reframe(coverage = mean(coverage)) %>% 
   normalise_sequencing_library_coverage(read_counts = read_counts_df,
@@ -963,7 +971,7 @@ for (panel in unique(hm.meta_df$subunit)) {
                          values_from = "coverage") %>% 
       tibble::column_to_rownames("library") %>%
       t()
-  
+
   draw(plot_genome_coverage_heatmap(
     cov_mat = cov_mat[rowSums(cov_mat) > 0,],
     meta_df = hm.meta_df %>% 
@@ -993,7 +1001,7 @@ hm.trna_cov_df <- hm.full_cov_df %>%
   
 ```
 
-```{r plot-trna-coverage-heatmap}
+```{r plot-trna-coverage-heatmap, fig.cap="Normalised mean read coverage at tRNA genes. tRNA gene names are row names, library names are columns. The minimum, median (i.e., 50th percentile) and maximum values are shown in the colour scale, as well as the 75th and 90th percentiles."}
 
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(
@@ -1016,65 +1024,108 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 
 ```{r calc-trna-coverage-for-mutant-and-wt}
-trna_cov_df <- hm.full_cov_df %>%
+
+# Currently hard-coded for tRNA features
+calculate_feature_coverage_between_mutant_and_wt <- function(df) {
+  cols <- c(
+    "subunit",
+    "strain.type",
+    "group",
+    "chr",
+    "strand",
+    "end",
+    "trna.name",
+    "proximity",
+    "mean_cov.norm"
+  )
+  
+  df.wt <- df %>% 
+    dplyr::filter(strain.type == "Wild-type") %>%
+    dplyr::mutate(strain.type = "WT") %>%
+    dplyr::select(tidyselect::all_of(cols)) %>% 
+    dplyr::distinct() %>% 
+    pivot_wider(names_from = "strain.type",
+                values_from = "mean_cov.norm")
+  
+  df %>%
+    dplyr::filter(strain.type == "Mutant") %>% 
+    dplyr::select(tidyselect::all_of(cols)) %>% 
+    dplyr::distinct() %>% 
+    pivot_wider(names_from = "strain.type",
+                values_from = "mean_cov.norm") %>% 
+    left_join(df.wt,
+              by = c("subunit", "chr", "strand", "end", "trna.name", "proximity"),
+              suffix = c('', '.wt')) %>%
+    group_by(subunit, group, trna.name, proximity) %>% 
+    summarise(
+      wt.sum = sum(WT),
+      wt.mean = mean(WT),
+      mut.sum = sum(Mutant),
+      mut.mean = mean(Mutant),
+      .groups = "keep"
+    ) %>%
+    ungroup() %>% 
+    mutate(diff.abs = abs(mut.mean - wt.mean)) %>% 
+    return()
+}
+
+trna_cov_df.mut_vs_wt <- hm.full_cov_df %>%
   filter(
-    feature.name == 'tRNA',
+    grepl(pattern = 'tRNA', x = feature.name),
     ! library %in% libs_for_filtering
   ) %>%
-  extract_metadata_from_library_names() %>%
   filter(
     sugar == "Galactose",
     subunit != "Other"
   ) %>%
-  dplyr::left_join(trna_df,
-                   by = c("chr", "end", "strand")) %>% 
-  dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
-                                 replacement = '\\1',
-                                 x = trna.name)) %>% 
-  summarise_coverage_by_feature(subunit, strain.type, group, chr, end, strand, trna.name) %>% 
-  dplyr::rename("coverage.sum" = "mean_cov.norm") %>% 
-  dplyr::filter(trna.name != "tX")
-
-trna_cov_df.wt <- trna_cov_df %>% 
-  dplyr::filter(strain.type == "Wild-type") %>%
-  dplyr::mutate(strain.type = "WT") %>%
-  dplyr::distinct(subunit, strain.type, chr, strand, end, trna.name, coverage.sum) %>% 
-  pivot_wider(names_from = "strain.type",
-              values_from = "coverage.sum")
-
-trna_cov_df.mut_vs_wt <- trna_cov_df %>%
-  dplyr::filter(strain.type == "Mutant") %>% 
-  dplyr::distinct(subunit, group, strain.type, chr, strand, end, trna.name, coverage.sum) %>% 
-  pivot_wider(names_from = "strain.type",
-              values_from = "coverage.sum") %>% 
-  left_join(trna_cov_df.wt,
-            by = c("subunit", "chr", "strand", "end", "trna.name")) %>%
-  group_by(subunit, group, trna.name) %>% 
-  summarise(
-    WT.sum = sum(WT),
-    WT.mean = mean(WT),
-    Mutant.sum = sum(Mutant),
-    Mutant.mean = mean(Mutant)
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, end, strand),
+                   by = c("chr", "end", "strand")) %>% View()
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, start, strand),
+                   by = c("chr", "end" = "start", "strand"),
+                   suffix = c('', '.up')) %>%
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, end, strand),
+                   by = c("chr", "start" = "end", "strand"),
+                   suffix = c('', '.down')) %>%
+  dplyr::mutate(
+    trna.name = coalesce(trna.name, trna.name.up, trna.name.down),
+    trna.name = gsub(pattern = '^(t.).*',
+                     replacement = '\\1',
+                     x = trna.name),
+    proximity = case_when(
+      feature.name == "tRNA" ~ "gene",
+      feature.name == "tRNA upstream" ~ "upstream",
+      feature.name == "tRNA downstream" ~ "downstream",
+      .default = NA
+    )
   ) %>%
-  ungroup() %>% 
-  mutate(diff.abs = abs(Mutant.mean - WT.mean))
+  summarise_coverage_by_feature(subunit, strain.type, group, chr, end, strand, trna.name, proximity) %>%
+  dplyr::filter(trna.name != "tX") %>% 
+  calculate_feature_coverage_between_mutant_and_wt()
+
 ```
 
-```{r plot-mutant-vs-wt-trna-coverages}
+```{r plot-mutant-vs-wt-trna-coverages, fig.cap="Comparison of the mean coverage (i.e., Ty1 insertions) upstream of and within tRNA genes. The size of points are scaled by the absolute difference between mean coverage values between the mutant and wild-type. Outlier points are labelled. The mean was calculated across all tRNA gene copies for each library (e.g., sixteen copies for alanine-tRNA [tA], four copies of cystine-tRNA [tC]).", fig.height=7, fig.width=7}
 trna_cov_df.mut_vs_wt %>% 
-  ggplot(aes_string(x = "WT.mean", y = "Mutant.mean", fill = "group", label = "trna.name", group = "group")) +
+  filter(proximity != "downstream") %>% 
+  ggplot(aes_string(x = "wt.mean", y = "mut.mean", fill = "group", label = "trna.name", group = "group")) +
   geom_point(shape = 21,
              colour = "black",
              aes(size = diff.abs)) +
   geom_smooth(aes(group = group, colour = group),
               se = FALSE,
-              show.legend = FALSE) +
-  facet_wrap(~subunit) +
+              show.legend = FALSE,
+              method = "loess",
+              formula = y ~ x) +
+  facet_grid(proximity~subunit) +
   scale_fill_manual(values = metadata_palette_list$group) +
   scale_colour_manual(values = metadata_palette_list$group) +
   ggrepel::geom_label_repel(show.legend = FALSE) +
   guides(
-    fill = guide_legend(override.aes = list(size = 3)),
+    fill = guide_legend(override.aes = list(size = 3),
+                        title = "Mutant library"),
     text = "none",
     size = "none",
     label = "none",
@@ -1090,8 +1141,42 @@ trna_cov_df.mut_vs_wt %>%
 ```
 
 ```{r trna-coverage-t-test}
-trna_cov_df.mut_vs_wt %>% 
-  # dplyr::group_by(subunit) %>%
+trna_test_df <- hm.full_cov_df %>%
+  filter(
+    feature.name == 'tRNA',
+    ! library %in% libs_for_filtering,
+    sugar == "Galactose",
+    subunit != "Other"
+  ) %>%
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, end, strand),
+                   by = c("chr", "end", "strand")) %>%
+  dplyr::mutate(
+    trna.type = gsub(pattern = '^(t.).*',
+                     replacement = '\\1',
+                     x = trna.name),
+    coverage.sum = coverage.pbp.norm
+  )
+perform_t_tests <- function(df) {
+  tmp_df <- df %>%
+    distinct(group, trna.name, coverage.sum) %>%
+    pivot_wider(names_from = "group",
+                values_from = "coverage.sum") %>%
+    column_to_rownames("trna.name")
+  }
+}
+trna_test_df %>%
+  filter(subunit == "RPC160",
+         trna.type == "tE") %>%
+  perform_t_tests()
+  
+  # dplyr::group_by(subunit, strain.type, group, trna.name) %>%
+  # dplyr::mutate(trna_obs = n()) %>% 
+  # dplyr::filter(
+  #   trna.name != "tX",
+  #   trna_obs > 3
+  # ) %>%
+  # dplyr::group_by(subunit, trna.name) %>%
   # tidyr::nest() %>%
   # dplyr::mutate(
   #   ttest = purrr::map(data,
