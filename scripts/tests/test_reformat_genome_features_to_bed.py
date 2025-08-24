@@ -14,6 +14,7 @@ class TestParseGFFToBED(unittest.TestCase):
         self.bed_file = "test_output.bed"
         self.gff_content = """##gff-version 3
 NC_001133.9\tRefSeq\tregion\t1\t230218\t.\t+\t.\tID=NC_001133.9:1..230218;Dbxref=taxon:559292;Name=I;chromosome=I;gbkey=Src;genome=chromosome;mol_type=genomic DNA;strain=S288C
+NC_001133.9\tMock\ttelomere\t1\t801\t.\t-\t.\tID=id-NC_001133.9:1..801;gbkey=telomere
 NC_001133.9\tMock\ttRNA\t640\t700\t.\t+\t.\tID=tRNA1;Name=tRNA1
 NC_001133.9\tMock\tgene\t1000\t2000\t.\t+\t.\tID=gene1;Name=Gene1
 NC_001133.9\tMock\ttRNA\t3000\t4000\t.\t-\t.\tID=tRNA2;Name=tRNA2
@@ -33,7 +34,7 @@ chrI\t5000\t6000\tTy1(LTR)\t+
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content.strip())
         self.gff_db = create_gff_db(gff_file = self.gff_file)
-        assert self.gff_db.count_features_of_type() == 11
+        assert self.gff_db.count_features_of_type() == 12
         return
 
     def tearDown(self):
@@ -205,9 +206,9 @@ NC_001133.9\t300\t400\tcustom_feature2\t-
     def test_create_subtelomere_features(self):
         from reformat_genome_features_to_bed import create_subtelomere_features
         new_features = create_subtelomere_features(self.gff_db, length=1000)
-        self.assertEqual(len(new_features), 2)
+        self.assertEqual(len(new_features), 1)
         self.assertIn("subtelomere-NC_001133.9", new_features)
-        self.assertEqual(4, len(new_features["subtelomere-NC_001133.9"]))
+        self.assertEqual(2, len(new_features["subtelomere-NC_001133.9"]))
         for _ft_name, ft_inst in new_features.items():
             for ft in ft_inst:
                 self.assertEqual(ft.featuretype, "subtelomere")

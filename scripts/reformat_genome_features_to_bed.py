@@ -468,19 +468,21 @@ def get_buffer_specification_index(buffer_spec_file: str = '',
 def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[str, List[gffutils.Feature]]:
     subtelomere_features = {}
     feature_length = kwargs.get('length', 15000)
-    for ft_inst in gff_db.all_features(featuretype='region'):
+    for ft_inst in gff_db.all_features(featuretype='telomere'):
+        # Create two subtelomere features:
+        # one for each DNA strand
         subtelomere_features[f"subtelomere-{ft_inst.chrom}"] = [
             feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length - 1}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-1"
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop}\t{ft_inst.stop + feature_length - 1}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-1"
             ),
+            # feature.feature_from_line(
+            #     f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-2"
+            # ),
+            # feature.feature_from_line(
+            #     f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length - 1}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-1"
+            # ),
             feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-2"
-            ),
-            feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length - 1}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-1"
-            ),
-            feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-2"
+                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{feature_length + ft_inst.stop - 1}\t{ft_inst.stop}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-2"
             )
         ]
         for subt_inst in subtelomere_features[f"subtelomere-{ft_inst.chrom}"]:
