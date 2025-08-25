@@ -14,10 +14,12 @@ dependencies:
   - r-rmarkdown
   - r-tidyverse
   - r-gggenes
+  - r-ggrepel
   - r-cowplot
   - r-here
   - r-kableextra
   - r-vegan
   - r-viridis
+  - r-webshot2
   - r-writexl
   - bioconductor-complexheatmap

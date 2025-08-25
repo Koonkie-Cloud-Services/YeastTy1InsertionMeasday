@@ -23,6 +23,7 @@ NC_001133.9\tRefSeq\tcentromere\t151465\t151582\t.\t+\t.\tID=id-NC_001133.9:1514
 NC_001133.9\tRefSeq\tcentromere\t151465\t151474\t.\t+\t.\tID=id-NC_001133.9:151465..151474;Note=CEN1
 NC_001133.9\tRefSeq\tcentromere\t151475\t151557\t.\t+\t.\tID=id-NC_001133.9:151475..151557;Note=CEN1
 NC_001133.9\tRefSeq\tcentromere\t151558\t151582\t.\t+\t.\tID=id-NC_001133.9:151558..151582;Note=CEN1
+NC_001133.9\tMock\ttelomere\t229411\t230218\t.\t+\t.\tID=id-NC_001133.9:1..801;gbkey=telomere
 NC_001224.1\tRefSeq\tregion\t1\t85779\t.\t+\t.\tID=NC_001224.1:1..85779;Dbxref=taxon:559292;Name=MT;gbkey=Src;genome=mitochondrion;mol_type=genomic DNA;strain=S288C;Is_circular=true;substrain=FY1679
 NC_001224.1\tRefSeq\tgene\t731\t802\t.\t+\t.\tID=gene-tP(UGG)Q;Dbxref=GeneID:854578,SGD:S000007307;Name=tP(UGG)Q;gbkey=Gene;gene_biotype=tRNA
         """
@@ -34,7 +35,7 @@ chrI\t5000\t6000\tTy1(LTR)\t+
         with open(self.gff_file, 'w') as fh:
             fh.write(self.gff_content.strip())
         self.gff_db = create_gff_db(gff_file = self.gff_file)
-        assert self.gff_db.count_features_of_type() == 12
+        assert self.gff_db.count_features_of_type() == 13
         return
 
     def tearDown(self):
@@ -212,6 +213,12 @@ NC_001133.9\t300\t400\tcustom_feature2\t-
         for _ft_name, ft_inst in new_features.items():
             for ft in ft_inst:
                 self.assertEqual(ft.featuretype, "subtelomere")
+                if ft.strand == '-':
+                    self.assertEqual(ft.start, 1801)
+                    self.assertEqual(ft.stop, 801)
+                elif ft.strand == '+':
+                    self.assertEqual(ft.start, 228411)
+                    self.assertEqual(ft.stop, 229411)
 
         return
 

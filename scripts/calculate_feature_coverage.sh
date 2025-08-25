@@ -111,6 +111,10 @@ do
 	bedtools sort \
 		-i $tmp_file_path \
 		-g $p_i_chr_lengths_file >$ff
+	if [ $? -ne 0 ]; then
+		echo "[ERROR] Command failed while processing file '$tmp_file_path'"
+		exit 1
+	fi
 done
 rm $tmp_file_path
 

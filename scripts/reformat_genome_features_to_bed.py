@@ -469,24 +469,35 @@ def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[st
     subtelomere_features = {}
     feature_length = kwargs.get('length', 15000)
     for ft_inst in gff_db.all_features(featuretype='telomere'):
-        # Create two subtelomere features:
-        # one for each DNA strand
-        subtelomere_features[f"subtelomere-{ft_inst.chrom}"] = [
-            feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop}\t{ft_inst.stop + feature_length - 1}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-1"
-            ),
-            # feature.feature_from_line(
-            #     f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.stop - feature_length}\t{ft_inst.stop}\t.\t+\t.\tID=subtelomere-{ft_inst.chrom}-2"
-            # ),
-            # feature.feature_from_line(
-            #     f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{ft_inst.start}\t{ft_inst.start + feature_length - 1}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-1"
-            # ),
-            feature.feature_from_line(
-                f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{feature_length + ft_inst.stop - 1}\t{ft_inst.stop}\t.\t-\t.\tID=subtelomere-{ft_inst.chrom}-2"
-            )
-        ]
-        for subt_inst in subtelomere_features[f"subtelomere-{ft_inst.chrom}"]:
-            subt_inst.id = f"subtelomere-{ft_inst.chrom}"
+        # Create a unique name for the subtelomere feature
+        subtelomere_name = f"subtelomere-{ft_inst.chrom}"
+        if subtelomere_name not in subtelomere_features:
+            subtelomere_features[subtelomere_name] = []
+
+        if ft_inst.start == 1 or ft_inst.stop == 1:
+            # This is the 5' subtelomere
+            start = max(ft_inst.start, ft_inst.stop)
+            stop = start + feature_length
+        else:
+            # This is the 3' subtelomere
+            stop = min(ft_inst.start, ft_inst.stop)
+            start = stop - feature_length
+
+        if kwargs.get('flip_negative_strand_positions', False):
+            if ft_inst.strand == "+":
+                pass
+            elif ft_inst.strand == "-":
+                start, stop = stop, start
+            else:
+                raise ValueError(f"Invalid strand: {ft_inst.strand}")
+
+        subtelomere_features[subtelomere_name] += [
+                feature.feature_from_line(
+                    f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{start}\t{stop}\t.\t{ft_inst.strand}\t.\tID={subtelomere_name}-{len(subtelomere_features[subtelomere_name])}"
+                )
+            ]
+        for subt_inst in subtelomere_features[subtelomere_name]:
+            subt_inst.id = subtelomere_name
             subt_inst.featuretype = "subtelomere"
     return subtelomere_features
 
