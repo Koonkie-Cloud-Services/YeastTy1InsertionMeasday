@@ -87,6 +87,8 @@ ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 	$p_o_coverage_dir "dupremoved.sorted" "${p_o_features_dir}/polymerase_analysis.RNA_Pol_3.bed"
 ./scripts/calculate_position_coverage.sh \
 	$p_o_coverage_dir "${p_o_features_dir}/polymerase_analysis.RNA_Pol_2.bed" "dupremoved.sorted"
+./scripts/count_rnda_locus_reads.sh \
+	$p_o_aln_dir "${p_o_coverage_dir}/rDNA_locus_counts.tsv"
 unlink $p_o_coverage_dir/$( basename $input_dir)
 
 # Render the RMarkdown report to create figures

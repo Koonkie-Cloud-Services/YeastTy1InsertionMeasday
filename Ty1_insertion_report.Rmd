@@ -3,7 +3,7 @@ title: "Ty1 Insertion Report"
 output:
   html_document:
     toc: TRUE
-    toc_depth: 1
+    toc_depth: 2
     keep_md: TRUE
 params:
   data_dir: 'data'
@@ -52,6 +52,7 @@ source(here("scripts", "butterfly_funcs.R"))
 # GLOBAL
 p.library_size_file <- here(params$data_dir, "input", "library_size_data.xlsx")
 p.custom_feature_file <- here(params$data_dir, "input", "custom_feature_annotations.xlsx")
+p.sample_id_mapping_file <- here(params$data_dir, "input", "hiseq_sample_id_map.tsv")
 p.read_norm_type <- "raw"
 p.libs_for_filtering <- c(
   "rpc160-delta-206211-304-307-Gal",
@@ -82,6 +83,9 @@ p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", 
 p.rpii.feature_bed_file <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "polymerase_analysis.RNA_Pol_2_features.bed")
 p.rpiii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_3_coverage_dupremoved.sorted.bed")
 p.bt.npc_file <- here(params$data_dir, "input", "41586_2012_BFnature11142_MOESM263_ESM.txt")
+
+# RDNA LOCUS
+p.rdna_count_file <- here(params$data_dir, "output", "genome_coverage", "output", "rDNA_locus_counts.tsv")
 ```
 
 ```{r create-output-directories}
@@ -348,9 +352,9 @@ plot_position_coverage <- function(df,
                         size = 3,
                         label = "TTS") +
       ggplot2::coord_cartesian(clip = 'on',
-                               ylim = c(0, 1E-5)) +
+                               ylim = c(0, 7E-6)) +
       ggplot2::scale_y_continuous(
-        breaks = c(0, 1E-5)
+        breaks = c(0, 7E-6)
       )
   }
   
@@ -394,7 +398,7 @@ plot_position_coverage <- function(df,
     xmin = buffer_length_bp - x_gap_size,
     xmax = buffer_length_bp + x_gap_size,
     ymin = 0,
-    ymax = 1.5E-5,
+    ymax = 6E-6,
     fill = "white",
     colour = "white",
     alpha = 0.8,
@@ -466,9 +470,30 @@ rpii.cov_df %>%
 
 ```{r load-trna-locations}
 trna_df <- load_trna_region_data_frame(p.bt.trna_bed_path)
+
+trna_df <- trna_df %>%
+  dplyr::mutate(
+    trna.type = gsub(pattern = '^(t.).*',
+                     replacement = '\\1',
+                     x = trna.name)
+  )
 ```
 
 Loaded `r nrow(trna_df)` tRNA gene locations.
+
+```{r write-trna-gene-summary}
+writexl::write_xlsx(
+  x = list(
+    "gene positions" = trna_df,
+    "summary" = trna_df %>% 
+      group_by(trna.type) %>% 
+      tally(name = "gene.count") %>% 
+      arrange(desc(gene.count))
+  ),
+  path = file.path(params$output_dir, "trna_gene_summary.xlsx")
+)
+```
+
 
 ```{r load-coverage-data}
 # TEST:
@@ -857,15 +882,25 @@ hm.meta_df <- hm.cov_df %>%
 
 ```{r plot-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
 
+nonunique_coverage_heatmap_blackout_features <- c(
+  "NTS1(misc feature)",
+  "NTS2(misc feature)",
+  "5S rRNA",
+  "5.8S ribosomal RNA",
+  "18S rRNA",
+  "25S rRNA",
+  "tRNA",
+  "tRNA upstream",
+  "tRNA downstream"
+)
+
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(
     cov_mat = hm.cov_df %>%
       extract_metadata_from_library_names() %>% 
       dplyr::filter(
         subunit == panel,
-        ! feature.name %in% c(
-          "NTS1(misc feature)", "5.8S ribosomal RNA", "5S rRNA"
-        )
+        ! feature.name %in% nonunique_coverage_heatmap_blackout_features
       ) %>% 
       dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_cov.norm"))) %>% 
       tidyr::pivot_wider(names_from = "feature.name",
@@ -1018,11 +1053,20 @@ for (panel in unique(hm.meta_df$subunit)) {
 ```{r subset-tRNA-features-from-coverage-data}
 hm.trna_cov_df <- hm.full_cov_df %>%
   filter(
-    feature.name == 'tRNA',
+    feature.name == 'tRNA upstream',
     ! library %in% p.libs_for_filtering
   ) %>%
-  dplyr::left_join(trna_df,
-                   by = c("chr", "end", "strand")) %>% 
+  dplyr::mutate(
+    junction_pos = ifelse(strand == "+",
+                          end,
+                          start)
+  ) %>% 
+  dplyr::left_join(trna_df %>%
+                     mutate(junction_pos = ifelse(strand == "+",
+                                                  start,
+                                                  end)) %>% 
+                     select(trna.name, chr, strand, junction_pos),
+                   by = c("chr", "junction_pos", "strand")) %>% 
   dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
                                  replacement = '\\1',
                                  x = trna.name)) %>% 
@@ -1137,10 +1181,15 @@ trna_cov_df.mut_vs_wt <- hm.full_cov_df %>%
 
 ```
 
-```{r plot-mutant-vs-wt-trna-coverages, fig.cap="Comparison of the mean coverage (i.e., Ty1 insertions) upstream of and within tRNA genes. The size of points are scaled by the absolute difference between mean coverage values between the mutant and wild-type. Outlier points are labelled. The mean was calculated across all tRNA gene copies for each library (e.g., sixteen copies for alanine-tRNA [tA], four copies of cystine-tRNA [tC]).", fig.height=7, fig.width=10}
+```{r plot-mutant-vs-wt-trna-coverages, fig.cap="Comparison of the mean coverage (i.e., Ty1 insertions) upstream of and within tRNA genes. The size of points are scaled by the absolute difference between mean coverage values between the mutant and wild-type. Black, dashed lines represent the mean wild-type coverage values. Outlier points are labelled. The mean was calculated across all tRNA gene copies for each library (e.g., sixteen copies for alanine-tRNA [tA], four copies of cystine-tRNA [tC]).", fig.height=7, fig.width=10}
 trna_cov_df.mut_vs_wt %>% 
   filter(proximity != "downstream") %>% 
   ggplot(aes_string(x = "wt.mean", y = "mut.mean", fill = "group", label = "trna.name", group = "group")) +
+  geom_line(aes(x = wt.mean,
+                y = wt.mean),
+            colour = "black",
+            linetype = "dashed",
+            linewidth = 1) +
   geom_point(shape = 21,
              colour = "black",
              aes(size = diff.abs)) +
@@ -1181,12 +1230,9 @@ trna_t_test_res_df <- hm.full_cov_df %>%
     subunit != "Other"
   ) %>%
   dplyr::left_join(trna_df %>% 
-                     select(trna.name, chr, end, strand),
+                     select(all_of(c("trna.name", "trna.type", "chr", "end", "strand"))),
                    by = c("chr", "end", "strand")) %>%
   dplyr::mutate(
-    trna.type = gsub(pattern = '^(t.).*',
-                     replacement = '\\1',
-                     x = trna.name),
     coverage.sum = coverage.pbp.norm
   ) %>%
   dplyr::group_by(subunit, strain.type, group, trna.type) %>%
@@ -1413,7 +1459,7 @@ rdna_locus_gene_list <- c(
   "5S rRNA",
   "NTS1(misc feature)",
   "18S rRNA",
-  "NTS2",
+  "NTS2(misc feature)",
   "25S rRNA"
 )
 
@@ -1443,6 +1489,47 @@ for (panel in unique(hm.meta_df$subunit)) {
 ```
 
 
+```{r normalised-coverage-comparison-at-rdna-locus, tab.cap="Normalised sequencing coverage values at rDNA loci across strains. All deduplicated read alignments were counted in the interval 451300 - 469300 on chromosome twelve (XII) for each library. Coverage values represent the percentage of total read reads sequenced for each library."}
+sample_name_map <- read.table(p.sample_id_mapping_file,
+                              header = TRUE,
+                              sep = "\t")
+rdna_cov_df <- read.table(p.rdna_count_file,
+           header = TRUE,
+           sep = "\t") %>%
+  separate(Library,
+           int = c("runId", "barcode"),
+           sep = "_") %>% 
+  left_join(sample_name_map,
+            by = c("runId", "barcode")) %>% 
+  select(tidyselect::all_of(c("library"="uniqueId", "ReadCount"))) %>%
+  extract_metadata_from_library_names() %>% 
+  left_join(read_counts_df %>% 
+              select(all_of(c("library", "norm_type", "seq_library_size"))),
+            by="library") %>%
+  mutate(coverage.norm = round(100 * ReadCount / seq_library_size, 3)) %>% 
+  filter(
+    norm_type == p.read_norm_type,
+    !library %in% p.libs_for_filtering,
+    sugar == "Galactose",
+    subunit != "Other"
+  ) %>%
+  arrange(subunit, strain.type) %>% 
+  select(all_of(c("subunit", "strain.type", "group", "coverage.norm")))
+
+rdna_cov_df %>% 
+  left_join(rdna_cov_df %>%
+              filter(strain.type == "Wild-type") %>%
+              select(!all_of(c("strain.type"))) %>% 
+              tidyr::pivot_wider(names_from = group,
+                                 values_from = coverage.norm),
+            by = "subunit") %>% 
+  mutate(diff = coverage.norm - WT) %>%
+  select(all_of(c("subunit", "strain.type", "group", "coverage.norm", "diff"))) %>% 
+  knitr::kable(col.names = c("Subunit", "Type", "Strain", "Normalised coverage (% of raw reads)", "Difference from WT")) %>% 
+  kableExtra::kable_minimal()
+  
+```
+
 ### Coverage using unique alignments
 
 ```{r plot-uniq-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library - for unambiguous alignments. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Alignments that mapped ambiguously to multiple regions were removed."}
@@ -1463,7 +1550,9 @@ for (panel in unique(hm.meta_df$subunit)) {
       extract_metadata_from_library_names() %>% 
       dplyr::filter(
         subunit == panel,
-        ! feature.name %in% c("tRNA", "tRNA upstream", "tRNA downstream")
+        ! feature.name %in% c(
+          "tRNA", "tRNA upstream", "tRNA downstream",
+          "NTS1(misc feature)", "5.8S ribosomal RNA", "5S rRNA")
       ) %>% 
       dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_cov.norm"))) %>% 
       tidyr::pivot_wider(names_from = "feature.name",
