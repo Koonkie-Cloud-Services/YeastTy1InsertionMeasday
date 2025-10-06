@@ -206,30 +206,6 @@ done
 log_message info "Primary Analysis Started"
 date
 
-# # Combine FASTQ files from the same sample
-# while IFS=$'\t' read -r sampleId strainId sugar uniqueId runId barcode libraryName fastqName || [ -n "$fastqName" ]
-# do
-# 	# Skip the header line
-# 	if [[ $sampleId == "sampleId" ]]; then
-# 		continue
-# 	fi
-# 	# Combine FASTQ files from the same sample
-# 	FASTQ_FILES=("${P_I_RAW_FASTQ_DIR}/${runId}_*${barcode}*.fastq.gz")
-# 	ls ${FASTQ_FILES[@]}
-# 	if [[ ${#FASTQ_FILES[@]} -gt 0 ]]; then
-# 		new_fastq_name="${runId}_${barcode}.fastq.gz"
-# 		if [[ -f "${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}" ]]; then
-# 			log_message info "Merged FASTQ file already exists: ${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}"
-# 			continue
-# 		fi
-# 		log_message info "Combining FASTQ files for sample: $sampleId"
-# 		run_command cat "${FASTQ_FILES[@]}" > "${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}"
-# 		log_message info "Combined FASTQ file created: ${P_O_MERGED_FASTQ_DIR}/${new_fastq_name}"
-# 	else
-# 		log_message warning "No FASTQ files found for sample: $sampleId"
-# 	fi
-# done < "$P_I_SAMPLE_ID_MAP"
-
 SAMPLE_NAMES=($(find_sample_names "${P_I_RAW_FASTQ_DIR}"))
 if [[ ${#SAMPLE_NAMES[@]} -eq 0 ]]; then
 	log_message error "No sample names found. Exiting."

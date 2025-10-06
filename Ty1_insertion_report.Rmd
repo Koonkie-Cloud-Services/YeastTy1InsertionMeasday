@@ -46,6 +46,7 @@ require(webshot2)
 ```{r load-scripts}
 source(here("scripts", "heatmap_funcs.R"))
 source(here("scripts", "butterfly_funcs.R"))
+source(here("scripts", "stats.R"))
 ```
 
 ```{r load-parameters}
@@ -85,7 +86,7 @@ p.rpiii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output",
 p.bt.npc_file <- here(params$data_dir, "input", "41586_2012_BFnature11142_MOESM263_ESM.txt")
 
 # RDNA LOCUS
-p.rdna_count_file <- here(params$data_dir, "output", "genome_coverage", "output", "rDNA_locus_counts.tsv")
+p.rdna_count_file <- here(params$data_dir, "output", "genome_coverage", "rDNA_locus_counts.tsv")
 ```
 
 ```{r create-output-directories}
@@ -309,7 +310,8 @@ plot_position_coverage <- function(df,
                                    text_gap_size = 100,
                                    loess_span = 0.01,
                                    x_gap_size = 20,
-                                   free_y_scale = FALSE) {
+                                   free_y_scale = FALSE,
+                                   y_max = NULL) {
   if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
     stop("Invalid plot type")
 
@@ -337,7 +339,7 @@ plot_position_coverage <- function(df,
   if (free_y_scale == TRUE) {
     plt <- plt +
       ggplot2::facet_grid(rows = vars(subunit),
-                        scales = "free")
+                          scales = "free")
   } else {
     plt <- plt +
       ggplot2::facet_grid(rows = vars(subunit)) +
@@ -393,17 +395,19 @@ plot_position_coverage <- function(df,
   else {
     stop("Unimplemented plot type.")
   }
-  plt <- plt +
-    ggplot2::geom_rect(
-    xmin = buffer_length_bp - x_gap_size,
-    xmax = buffer_length_bp + x_gap_size,
-    ymin = 0,
-    ymax = 6E-6,
-    fill = "white",
-    colour = "white",
-    alpha = 0.8,
-    inherit.aes = FALSE
-  )
+  if (!is.null(y_max)) {
+    plt <- plt +
+      ggplot2::geom_rect(
+        xmin = buffer_length_bp - x_gap_size,
+        xmax = buffer_length_bp + x_gap_size,
+        ymin = 0,
+        ymax = y_max,
+        fill = "white",
+        colour = "white",
+        alpha = 0.8,
+        inherit.aes = FALSE
+      )
+  }
   return(plt)
 }
 ```
@@ -463,6 +467,71 @@ rpii.cov_df %>%
                                          add_zero_coverage_positions = FALSE,
                                          summarise_by_position = FALSE) %>%
   plot_coverage_stacked_barplot(palette_vals = metadata_palette_list[["library"]])
+
+```
+
+```{r rna-pol-ii-subunit-coverage-t-test, tab.cap="."}
+
+test_coverage_by_group <- function(df) {
+  groups <- unique(df$group)
+  # Kruskal-Wallis test for >2 groups
+  res <- kruskal.test(coverage ~ group, data = df)
+  return(list(test = "Kruskal-Wallis", p.value = res$p.value))
+}
+
+rpii.gene_cov_df <- rpii.cov_df %>% 
+  extract_metadata_from_library_names() %>%
+  filter(
+    sugar == "Galactose",
+    subunit != "Other"
+  ) %>% 
+  select(subunit, strain.type, group, feature, coverage)
+
+results <- lapply(unique(rpii.gene_cov_df[["subunit"]]), function(sub) {
+  df_sub <- rpii.gene_cov_df %>%
+    filter(subunit == sub)
+  res <- test_coverage_by_group(df_sub)
+  data.frame(subunit = sub,
+             test = res$test,
+             p.value = res$p.value)
+})
+
+# Print results
+rpii.subunit_cov_test_kable <- do.call(rbind, results) %>%
+  select(all_of(c("subunit", "p.value"))) %>% 
+  knitr::kable(col.names = c("Subunit", "p-value")) %>% 
+  kableExtra::kable_minimal()
+
+rpii.subunit_cov_test_kable
+kableExtra::save_kable(
+  rpii.subunit_cov_test_kable,
+  file = file.path(params$output_dir, "RNA_Pol_II_gene_coverage_subunit_test_results.pdf"))
+```
+
+```{r rna-pol-ii-strain-coverage-t-test, tab.cap="."}
+rpii.strain_cov_test_kable <- rpii.gene_cov_df %>% 
+  dplyr::group_by(subunit) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(
+    ttest = purrr::map(data,
+                       subunit_wise_t_test_helper,
+                       paired = FALSE,
+                       conf.level = 0.99,
+                       alternative = "two.sided",
+                       values_col = "coverage")
+  ) %>%
+  tidyr::unnest(ttest) %>%
+  dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
+  knitr::kable(
+    digits = Inf,
+    col.names = c("Subunit", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+  ) %>%
+  kableExtra::kable_minimal()
+
+rpii.strain_cov_test_kable
+kableExtra::save_kable(
+  rpii.strain_cov_test_kable,
+  file = file.path(params$output_dir, "RNA_Pol_II_gene_coverage_strain_test_results.pdf"))
 
 ```
 
@@ -721,59 +790,6 @@ cowplot::plot_grid(dist_plot.a, dist_plot.b,
 
 ```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference between the tRNA coverages of mutant and wild-type strains."}
 
-t_test <- function(df, ...) {
-  t.test(
-    x = df %>% 
-         dplyr::filter(strain.type == "Wild-type") %>% 
-         dplyr::pull(coverage.sum), 
-    y = df %>% 
-         dplyr::filter(strain.type == "Mutant") %>% 
-         dplyr::pull(coverage.sum),
-    ...
-  ) %>% 
-    broom::tidy() %>% 
-    dplyr::rename(
-      "wt.mean"="estimate1",
-      "mut.mean"="estimate2"
-    ) %>% 
-    return()
-}
-
-subunit_wise_t_test_helper <- function(df, ...) {
-  # Required columns: 
-  # * strain.type: either Mutant or Wild-type
-  # * group: the grouping variable to perform comparisons between MT and WT
-  unique_groups <- df %>%
-    filter(strain.type != "Wild-type") %>% 
-    pull(group) %>% 
-    unique()
-  
-  res_cat_df <- data.frame()
-  for (group_name in unique_groups) {
-    subgroup_df <- df %>% 
-      filter(group == group_name | group == "WT")
-    obs_matrix <- subgroup_df %>% 
-      group_by(strain.type) %>% 
-      tally()
-
-    if (min(obs_matrix$n) < 3) {
-      message(paste0("Skipping t-test for '", group_name, "' due to insufficient observations."))
-    } else if ( nrow(obs_matrix) != 2 ) {
-      message(paste0("Both mutant and wild-type were not found for '", group_name, "'."))
-    } else {
-      res_df <- subgroup_df %>% 
-        t_test(df=.,
-               ...) %>% 
-        dplyr::mutate(group = group_name)
-      if (nrow(res_cat_df) == 0)
-        res_cat_df <- res_df
-      else
-        res_cat_df <- bind_rows(res_cat_df, res_df)
-    }
-  }
-  return(res_cat_df)
-}
-
 bt.cov_t_test_res_table <- bt.cov_df %>%
   filter(sugar == "Galactose",
          subunit != "Other",
@@ -788,7 +804,8 @@ bt.cov_t_test_res_table <- bt.cov_df %>%
                        subunit_wise_t_test_helper,
                        paired = FALSE,
                        conf.level = 0.99,
-                       alternative = "two.sided")
+                       alternative = "two.sided",
+                       values_col = "coverage.sum")
   ) %>%
   tidyr::unnest(ttest) %>%
   dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
@@ -799,7 +816,10 @@ bt.cov_t_test_res_table <- bt.cov_df %>%
   kableExtra::kable_minimal()
 
 bt.cov_t_test_res_table
-kableExtra::save_kable(bt.cov_t_test_res_table, "t-test_tRNA_coverage_table.pdf")
+kableExtra::save_kable(
+  bt.cov_t_test_res_table,
+  file = file.path(params$output_dir, "t-test_tRNA_coverage_table.pdf")
+)
 
 ```
 
@@ -1249,7 +1269,8 @@ trna_t_test_res_df <- hm.full_cov_df %>%
                        subunit_wise_t_test_helper,
                        paired = FALSE,
                        conf.level = 0.99,
-                       alternative = "two.sided")
+                       alternative = "two.sided",
+                       values_col = "coverage.sum")
   ) %>%
   tidyr::unnest(ttest) %>%
   dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean", "mut.mean")))
@@ -1270,7 +1291,7 @@ kableExtra::save_kable(
     knitr::kable(digits = Inf) %>% 
     kableExtra::row_spec(bold_rows, bold = TRUE) %>% 
     kableExtra::kable_minimal(),
-  file = "t-test_tRNA_gene_coverage_table.pdf"
+  file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
 )
 
 ```
@@ -1449,8 +1470,7 @@ hm.cov_df %>%
 
 The figure above shows that there is less differentiation between the different libraries when using TPM values (y-axis) compared to using coverage values (x-axis). Whether this reflects true signal or a lack of normalization in calculating coverage values is not clear.
 
-### Insertion at rDNA locus genes
-
+### Insertion at genes in the rDNA locus
 
 ```{r rdna-locus-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
 
@@ -1516,17 +1536,23 @@ rdna_cov_df <- read.table(p.rdna_count_file,
   arrange(subunit, strain.type) %>% 
   select(all_of(c("subunit", "strain.type", "group", "coverage.norm")))
 
-rdna_cov_df %>% 
+rdna_wt_diff_cov <- rdna_cov_df %>% 
   left_join(rdna_cov_df %>%
               filter(strain.type == "Wild-type") %>%
               select(!all_of(c("strain.type"))) %>% 
               tidyr::pivot_wider(names_from = group,
                                  values_from = coverage.norm),
-            by = "subunit") %>% 
+            by = "subunit") %>%
   mutate(diff = coverage.norm - WT) %>%
   select(all_of(c("subunit", "strain.type", "group", "coverage.norm", "diff"))) %>% 
   knitr::kable(col.names = c("Subunit", "Type", "Strain", "Normalised coverage (% of raw reads)", "Difference from WT")) %>% 
   kableExtra::kable_minimal()
+
+rdna_wt_diff_cov
+kableExtra::save_kable(
+  x = rdna_wt_diff_cov,
+  file = file.path(params$output_dir, "rDNA_coverage_table.pdf")
+)
   
 ```
 
