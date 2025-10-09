@@ -88,6 +88,8 @@ ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 # Calculate coverage of features used in polymerase analysis
 ./scripts/calculate_feature_coverage.sh \
 	$p_o_coverage_dir "dupremoved.sorted" "${p_o_features_dir}/polymerase_analysis.RNA_Pol_3.bed"
+./scripts/calculate_feature_coverage.sh \
+	$p_o_coverage_dir "dupremoved_uniq.sorted" "${p_o_features_dir}/polymerase_analysis.RNA_Pol_3.bed"
 ./scripts/calculate_position_coverage.sh \
 	$p_o_coverage_dir "${p_o_features_dir}/polymerase_analysis.RNA_Pol_2.bed" "dupremoved.sorted"
 ./scripts/count_rnda_locus_reads.sh \

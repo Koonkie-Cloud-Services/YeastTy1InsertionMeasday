@@ -44,9 +44,10 @@ require(webshot2)
 ```
 
 ```{r load-scripts}
-source(here("scripts", "heatmap_funcs.R"))
-source(here("scripts", "butterfly_funcs.R"))
-source(here("scripts", "stats.R"))
+source(here("scripts", "R", "heatmap_funcs.R"))
+source(here("scripts", "R", "butterfly_funcs.R"))
+source(here("scripts", "R", "stats.R"))
+source(here("scripts", "R", "position_wise_coverage.R"))
 ```
 
 ```{r load-parameters}
@@ -83,6 +84,7 @@ p.hm.uniq_cov_file <- here(params$data_dir, "output", "genome_coverage", "output
 p.rpii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_2_coverage_dupremoved.sorted.bed")
 p.rpii.feature_bed_file <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "polymerase_analysis.RNA_Pol_2_features.bed")
 p.rpiii.cov_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_3_coverage_dupremoved.sorted.bed")
+p.rpiii.cov_uniq_file <- here(params$data_dir, "output", "genome_coverage", "output", "polymerase_analysis.RNA_Pol_3_coverage_dupremoved_uniq.sorted.bed")
 p.bt.npc_file <- here(params$data_dir, "input", "41586_2012_BFnature11142_MOESM263_ESM.txt")
 
 # RDNA LOCUS
@@ -142,396 +144,6 @@ for (i in seq(1, length(subunit_pal_names))) {
     metadata_palette_list[["library"]], n[["library"]]
   )
 }
-
-```
-
-# Coverage at genes transcribed by RNA Polymerase II
-
-```{r load-rna-pol-ii-table, eval=TRUE}
-rpii.cov_columns <- c("library", "seqid", "position", "strand", "feature", "coverage")
-rpii.cov_df <- readr::read_tsv(file=p.rpii.cov_file,
-                               col_names = rpii.cov_columns) %>% 
-  mutate(library = gsub(pattern = "[[:punct:]]",
-                        replacement = '-',
-                        x = library)) %>% 
-  filter(! library %in% p.libs_for_filtering)
-
-rpii.gene_df <- readr::read_tsv(file=p.rpii.feature_bed_file,
-                               col_names = c("seqid", "start", "stop", "feature", "strand")) %>% 
-  group_by(feature) %>% 
-  mutate(id = row_number()) %>% 
-  filter(id == 2) %>% # Grab just the true coordinates of the gene. 1 & 3 correspond to buffer regions.
-  select(feature, start, stop) %>% 
-  mutate(length = stop - start)
-```
-
-```{r test-rna-pol-ii-table, eval=FALSE}
-row_count <- 6000
-
-replicate_items <- function(items, total_count) {
-  is.wholenumber <- function(n)
-    return(round(n) == n)
-
-  frac <- total_count / length(items)
-  if (!is.wholenumber(frac))
-    stop(
-      paste("total_count is not divisible by number of items:", frac)
-    )
-  unlist(lapply(items, rep.int, frac))
-}
-
-rpii.cov_df <- data.frame(
-  library = replicate_items(c('lib_abc'), row_count),
-  seqid = replicate_items(c('chr1'), row_count),
-  strand = replicate_items(c('+'), row_count),
-  rel_position = seq.int(from = 0, length.out = row_count, by = 2),
-  coverage = round(rnorm(row_count, mean = 3, sd = 3)),
-  feature = replicate_items(c('gene1', 'gene2', 'gene3'), row_count)
-) %>% 
-  dplyr::mutate(
-    feature = gsub(pattern = "^gene-", replacement = "", x = feature)
-  )
-
-rpii.gene_df <- data.frame(
-  feature = c('gene1', 'gene2', 'gene3'),
-  start = c(0, 1000, 2000),
-  stop = c(1000, 2000, 3000),
-  length = c(1000, 1000, 1000)
-)
-
-rpii.nucleosome_df <- readxl::read_xlsx(
-  path = "data/input/13059_2018_1398_MOESM2_ESM.xlsx"
-) %>%
-  dplyr::rename(
-    "Nucleosome_up" = "+1 nucleosome",
-    "Nucleosome_down" = "-1 nucleosome"
-  ) %>% 
-  dplyr::select(ORF, Chr, TSS, TTS, Nucleosome_up, Nucleosome_down)
-  
-
-```
-
-```{r prepare-rpii-coverage-dataframe}
-buffer_length_bp <- 500
-
-prep_position_wise_feature_coverage_df <- function(df,
-                                                   gene_df,
-                                                   min_gene_read_count = 1,
-                                                   min_gene_coverage = 0,
-                                                   min_feature_length = buffer_length_bp * 2,
-                                                   add_zero_coverage_positions = TRUE,
-                                                   summarise_by_position = TRUE) {
-  input_gene_count <- nrow(gene_df)
-  feature_length_list <- gene_df %>% 
-    filter(length >= min_feature_length) %>% 
-    pull(feature)
-  message(
-    paste("Dropped", input_gene_count - length(feature_length_list), "genes shorter than", min_feature_length, "bp")
-  )
-  
-  feature_cov_list <- df %>% 
-    group_by(library, feature) %>%
-    summarise(
-      read_total = sum(coverage.raw),
-      coverage_total = sum(coverage),
-      .groups = "keep"
-    ) %>% 
-    filter(
-      read_total >= min_gene_read_count,
-      coverage_total >= min_gene_coverage
-    ) %>% 
-    pull(feature) %>% 
-    unique()
-  message(
-    paste("Dropped", input_gene_count - length(feature_cov_list), "low-coverage genes")
-  )
-  
-  feature_list <- base::intersect(feature_length_list, feature_cov_list)
-  message(
-    paste("Analyzing ", length(feature_list), "/",  input_gene_count, " genes", sep = "")
-  )
-  
-  result_df <- df %>%
-    filter(
-      feature %in% feature_list
-    ) %>%
-    left_join(gene_df,
-              by = "feature") %>% 
-    mutate(
-      rel_position = case_when(
-        start + buffer_length_bp > position ~ position - start,
-        stop - buffer_length_bp < position ~ position - stop + (2 * buffer_length_bp),
-        .default = NA
-      ),
-      rel_position = case_when(
-        strand == '-' ~ (rel_position * -1) +  (2 * buffer_length_bp),
-        .default = rel_position
-      )
-    ) %>%
-    dplyr::filter(
-      !is.na(rel_position)
-    ) %>%
-    select(library, seqid, rel_position, strand, feature, coverage)
-
-  if (add_zero_coverage_positions == TRUE) {
-    result_df <- result_df %>%
-      dplyr::group_by(library, seqid, strand, feature) %>%
-      tidyr::expand(rel_position = seq.int(from = buffer_length_bp * -1,
-                                           to = buffer_length_bp * 3)) %>% 
-      dplyr::mutate(coverage = NA) %>% 
-      left_join(result_df,
-                by = c("library", "seqid", "strand", "feature", "rel_position"),
-                suffix = c("_df1", "_df2")) %>%
-      mutate(
-        coverage = coalesce(coverage_df1, coverage_df2),
-        coverage = coalesce(coverage, 0)
-      ) %>%
-      select(!all_of(c("coverage_df1", "coverage_df2")))
-  }
-  
-  if (summarise_by_position == TRUE) {
-    result_df <- result_df %>% 
-      group_by(library, rel_position) %>% 
-      dplyr::reframe(coverage = sum(coverage),
-                     .groups = "keep")
-  }
-  
-  if (nrow(result_df) == 0)
-    stop("All genes dropped by filtering thresholds.")
-  return(result_df)
-}
-```
-
-```{r define-gene-position-coverage-plotting-function}
-plot_position_coverage <- function(df,
-                                   palette_vals,
-                                   plot_type = "smooth",
-                                   label_y_position = 0,
-                                   text_gap_size = 100,
-                                   loess_span = 0.01,
-                                   x_gap_size = 20,
-                                   free_y_scale = FALSE,
-                                   y_max = NULL) {
-  if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
-    stop("Invalid plot type")
-
-  plt <- df %>% 
-    ggplot(aes(
-      x = rel_position,
-      y = coverage,
-      group = library
-    )) +
-    ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
-                        linetype = "dashed") +
-    ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
-                        linetype = "dashed") +
-    ggplot2::scale_colour_manual(values = palette_vals) +
-    ggplot2::guides(colour = guide_legend(title = "")) +
-    ggplot2::scale_x_continuous(
-      breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
-      labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
-    ) +
-    labs(x = "",
-         y = "Relative number of Ty1 insertions\n(normalised coverage)") +
-    theme_bw() +
-    theme(plot.margin = unit(c(2,1,1,1), "lines"))
-  
-  if (free_y_scale == TRUE) {
-    plt <- plt +
-      ggplot2::facet_grid(rows = vars(subunit),
-                          scales = "free")
-  } else {
-    plt <- plt +
-      ggplot2::facet_grid(rows = vars(subunit)) +
-      ggplot2::annotate("text",
-                        x = 0 - text_gap_size,
-                        y = label_y_position,
-                        size = 3,
-                        label = "TSS") +
-      ggplot2::annotate("text",
-                        x = 1000 + text_gap_size,
-                        y = label_y_position,
-                        size = 3,
-                        label = "TTS") +
-      ggplot2::coord_cartesian(clip = 'on',
-                               ylim = c(0, 7E-6)) +
-      ggplot2::scale_y_continuous(
-        breaks = c(0, 7E-6)
-      )
-  }
-  
-  if (plot_type == "smooth") {
-    plt <- plt +
-      geom_smooth(se = FALSE,
-                  colour = "black",
-                  method = "loess",
-                  formula = y ~ x,
-                  span = loess_span,
-                  level = 0.98,
-                  linewidth = 2) +
-      geom_smooth(se = FALSE,
-                  method = "loess",
-                  formula = y ~ x,
-                  span = loess_span,
-                  level = 0.98,
-                  aes(colour = library),
-                  linewidth = 1.5)
-  }
-  else if (plot_type == "line") {
-    plt <- plt +
-      geom_line(colour = "black",
-                linewidth = 2) +
-      geom_line(aes(colour = library),
-                linewidth = 1.5)
-  }
-  else if (plot_type == "bar") {
-    plt <- plt +
-      geom_bar(
-        colour = "black",
-        aes(fill = library),
-        stat = "identity"
-      )
-  }
-  else {
-    stop("Unimplemented plot type.")
-  }
-  if (!is.null(y_max)) {
-    plt <- plt +
-      ggplot2::geom_rect(
-        xmin = buffer_length_bp - x_gap_size,
-        xmax = buffer_length_bp + x_gap_size,
-        ymin = 0,
-        ymax = y_max,
-        fill = "white",
-        colour = "white",
-        alpha = 0.8,
-        inherit.aes = FALSE
-      )
-  }
-  return(plt)
-}
-```
-
-```{r plot-absolute-position-coverage}
-
-rpii.cov_df %>%
-  normalise_sequencing_library_coverage(read_counts = read_counts_df,
-                                        read_norm_type = "raw") %>% 
-  dplyr::rename(
-    "coverage.raw" = coverage,
-    "coverage" = coverage.norm
-  ) %>%
-  prep_position_wise_feature_coverage_df(rpii.gene_df,
-                                         min_gene_coverage = 0,
-                                         min_gene_read_count = 1,
-                                         add_zero_coverage_positions = FALSE,
-                                         summarise_by_position = TRUE) %>%
-  extract_metadata_from_library_names() %>%
-  filter(
-    subunit %in% c("RPC34", "RPC53", "RPC160"),
-    sugar == "Galactose"
-  ) %>%
-  plot_position_coverage(plot_type = "smooth",
-                         free_y_scale = TRUE,
-                         palette_vals = metadata_palette_list[["library"]],
-                         text_gap_size = 120,
-                         loess_span = 0.05,
-                         label_y_position = 9E-6)  # 3E-7 when positions with zero reads mapped are included
-  
-```
-
-```{r plot-gene-coverage-distribution, fig.height=8, fig.width=13, eval=FALSE}
-
-plot_coverage_stacked_barplot <- function(df, palette_vals) {
-  df %>% 
-    group_by(library, feature) %>% 
-    reframe(coverage = sum(coverage)) %>%
-    ggplot(aes(x = log(coverage), fill = library)) +
-    labs(x = "log(coverage)",
-         y = "Gene count") +
-    ggplot2::scale_fill_manual(values = palette_vals) +
-    geom_histogram(colour = "black", linewidth = 0.1, bins = 50) +
-    theme_bw()
-}
-
-rpii.cov_df %>%
-  normalise_sequencing_library_coverage(read_counts = read_counts_df,
-                                        read_norm_type = "raw") %>% 
-  dplyr::rename(
-    "coverage.raw" = coverage,
-    "coverage" = coverage.norm
-  ) %>%
-  prep_position_wise_feature_coverage_df(rpii.gene_df,
-                                         min_gene_coverage = 1E-7,
-                                         min_gene_read_count = 10,
-                                         add_zero_coverage_positions = FALSE,
-                                         summarise_by_position = FALSE) %>%
-  plot_coverage_stacked_barplot(palette_vals = metadata_palette_list[["library"]])
-
-```
-
-```{r rna-pol-ii-subunit-coverage-t-test, tab.cap="."}
-
-test_coverage_by_group <- function(df) {
-  groups <- unique(df$group)
-  # Kruskal-Wallis test for >2 groups
-  res <- kruskal.test(coverage ~ group, data = df)
-  return(list(test = "Kruskal-Wallis", p.value = res$p.value))
-}
-
-rpii.gene_cov_df <- rpii.cov_df %>% 
-  extract_metadata_from_library_names() %>%
-  filter(
-    sugar == "Galactose",
-    subunit != "Other"
-  ) %>% 
-  select(subunit, strain.type, group, feature, coverage)
-
-results <- lapply(unique(rpii.gene_cov_df[["subunit"]]), function(sub) {
-  df_sub <- rpii.gene_cov_df %>%
-    filter(subunit == sub)
-  res <- test_coverage_by_group(df_sub)
-  data.frame(subunit = sub,
-             test = res$test,
-             p.value = res$p.value)
-})
-
-# Print results
-rpii.subunit_cov_test_kable <- do.call(rbind, results) %>%
-  select(all_of(c("subunit", "p.value"))) %>% 
-  knitr::kable(col.names = c("Subunit", "p-value")) %>% 
-  kableExtra::kable_minimal()
-
-rpii.subunit_cov_test_kable
-kableExtra::save_kable(
-  rpii.subunit_cov_test_kable,
-  file = file.path(params$output_dir, "RNA_Pol_II_gene_coverage_subunit_test_results.pdf"))
-```
-
-```{r rna-pol-ii-strain-coverage-t-test, tab.cap="."}
-rpii.strain_cov_test_kable <- rpii.gene_cov_df %>% 
-  dplyr::group_by(subunit) %>%
-  tidyr::nest() %>%
-  dplyr::mutate(
-    ttest = purrr::map(data,
-                       subunit_wise_t_test_helper,
-                       paired = FALSE,
-                       conf.level = 0.99,
-                       alternative = "two.sided",
-                       values_col = "coverage")
-  ) %>%
-  tidyr::unnest(ttest) %>%
-  dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
-  knitr::kable(
-    digits = Inf,
-    col.names = c("Subunit", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
-  ) %>%
-  kableExtra::kable_minimal()
-
-rpii.strain_cov_test_kable
-kableExtra::save_kable(
-  rpii.strain_cov_test_kable,
-  file = file.path(params$output_dir, "RNA_Pol_II_gene_coverage_strain_test_results.pdf"))
 
 ```
 
@@ -823,6 +435,190 @@ kableExtra::save_kable(
 
 ```
 
+# Ty1 insertions at RNA Polymerase II transcribed genes
+
+```{r load-rna-pol-ii-table, eval=TRUE}
+rpii.cov_columns <- c("library", "seqid", "position", "strand", "feature", "coverage")
+rpii.cov_df <- readr::read_tsv(file=p.rpii.cov_file,
+                               col_names = rpii.cov_columns) %>% 
+  mutate(library = gsub(pattern = "[[:punct:]]",
+                        replacement = '-',
+                        x = library)) %>% 
+  filter(! library %in% p.libs_for_filtering) %>%
+  normalise_sequencing_library_coverage(read_counts = read_counts_df,
+                                        read_norm_type = "raw") %>% 
+  dplyr::rename(
+    "coverage.raw" = coverage,
+    "coverage" = coverage.norm
+  )
+
+rpii.gene_df <- readr::read_tsv(file=p.rpii.feature_bed_file,
+                               col_names = c("seqid", "start", "stop", "feature", "strand")) %>% 
+  group_by(feature) %>% 
+  mutate(id = row_number()) %>% 
+  filter(id == 2) %>% # Grab just the true coordinates of the gene. 1 & 3 correspond to buffer regions.
+  select(feature, start, stop) %>% 
+  mutate(length = stop - start)
+```
+
+```{r test-rna-pol-ii-table, eval=FALSE}
+row_count <- 6000
+
+replicate_items <- function(items, total_count) {
+  is.wholenumber <- function(n)
+    return(round(n) == n)
+
+  frac <- total_count / length(items)
+  if (!is.wholenumber(frac))
+    stop(
+      paste("total_count is not divisible by number of items:", frac)
+    )
+  unlist(lapply(items, rep.int, frac))
+}
+
+rpii.cov_df <- data.frame(
+  library = replicate_items(c('lib_abc'), row_count),
+  seqid = replicate_items(c('chr1'), row_count),
+  strand = replicate_items(c('+'), row_count),
+  rel_position = seq.int(from = 0, length.out = row_count, by = 2),
+  coverage = round(rnorm(row_count, mean = 3, sd = 3)),
+  feature = replicate_items(c('gene1', 'gene2', 'gene3'), row_count)
+) %>% 
+  dplyr::mutate(
+    feature = gsub(pattern = "^gene-", replacement = "", x = feature)
+  )
+
+rpii.gene_df <- data.frame(
+  feature = c('gene1', 'gene2', 'gene3'),
+  start = c(0, 1000, 2000),
+  stop = c(1000, 2000, 3000),
+  length = c(1000, 1000, 1000)
+)
+
+rpii.nucleosome_df <- readxl::read_xlsx(
+  path = "data/input/13059_2018_1398_MOESM2_ESM.xlsx"
+) %>%
+  dplyr::rename(
+    "Nucleosome_up" = "+1 nucleosome",
+    "Nucleosome_down" = "-1 nucleosome"
+  ) %>% 
+  dplyr::select(ORF, Chr, TSS, TTS, Nucleosome_up, Nucleosome_down)
+  
+
+```
+
+```{r plot-absolute-position-coverage, fig.cap="Position-wise coverages across genes transcribed by RNA Polymerase II. Coverage values represent summed deduplicated alignment counts at each position, normalised by the sequencing library's total read counts. Ranges include 500 bp upstream and downstream (-500 and 500, respectively), and include the first and last 500 bp of an ORF. 3,707 of 5,199 annotated ORFs longer than 1,000 bp and with at least one read alignment were included."}
+
+rpii.cov_df %>%
+  prep_position_wise_feature_coverage_df(rpii.gene_df,
+                                         min_gene_coverage = 0,
+                                         min_gene_read_count = 1,
+                                         add_zero_coverage_positions = FALSE,
+                                         summarise_by_position = TRUE) %>%
+  dplyr::rename("coverage" = "coverage.sum") %>% 
+  extract_metadata_from_library_names() %>%
+  filter(
+    subunit %in% c("RPC34", "RPC53", "RPC160"),
+    sugar == "Galactose"
+  ) %>%
+  plot_position_coverage(plot_type = "smooth",
+                         free_y_scale = TRUE,
+                         palette_vals = metadata_palette_list[["library"]],
+                         text_gap_size = 120,
+                         loess_span = 0.05,
+                         label_y_position = 9E-6)  # 3E-7 when positions with zero reads mapped are included
+  
+```
+
+```{r plot-gene-coverage-distribution, fig.height=8, fig.width=13, eval=FALSE}
+
+plot_coverage_stacked_barplot <- function(df, palette_vals) {
+  df %>% 
+    group_by(library, feature) %>% 
+    reframe(coverage = sum(coverage)) %>%
+    ggplot(aes(x = log(coverage), fill = library)) +
+    labs(x = "log(coverage)",
+         y = "Gene count") +
+    ggplot2::scale_fill_manual(values = palette_vals) +
+    geom_histogram(colour = "black", linewidth = 0.1, bins = 50) +
+    theme_bw()
+}
+
+rpii.cov_df %>%
+  prep_position_wise_feature_coverage_df(rpii.gene_df,
+                                         min_gene_coverage = 1E-7,
+                                         min_gene_read_count = 10,
+                                         add_zero_coverage_positions = FALSE,
+                                         summarise_by_position = FALSE) %>%
+  plot_coverage_stacked_barplot(palette_vals = metadata_palette_list[["library"]])
+
+```
+
+```{r rna-pol-ii-subunit-coverage-t-test, tab.cap="P-values from Kruskal-Wallis tests comparing normalised coverage values between all mutant strains to wild-type for each subunit."}
+
+test_coverage_by_group <- function(df) {
+  groups <- unique(df$group)
+  # Kruskal-Wallis test for >2 groups
+  res <- kruskal.test(coverage ~ group, data = df)
+  return(list(test = "Kruskal-Wallis", p.value = res$p.value))
+}
+
+rpii.gene_cov_df <- rpii.cov_df %>%
+  extract_metadata_from_library_names() %>%
+  filter(
+    sugar == "Galactose",
+    subunit != "Other"
+  ) %>% 
+  select(subunit, strain.type, group, feature, coverage)
+
+results <- lapply(unique(rpii.gene_cov_df[["subunit"]]), function(sub) {
+  df_sub <- rpii.gene_cov_df %>%
+    filter(subunit == sub)
+  res <- test_coverage_by_group(df_sub)
+  data.frame(subunit = sub,
+             test = res$test,
+             p.value = res$p.value)
+})
+
+# Print results
+rpii.subunit_cov_test_kable <- do.call(rbind, results) %>%
+  select(all_of(c("subunit", "p.value"))) %>% 
+  knitr::kable(col.names = c("Subunit", "p-value")) %>% 
+  kableExtra::kable_minimal()
+
+rpii.subunit_cov_test_kable
+kableExtra::save_kable(
+  rpii.subunit_cov_test_kable,
+  file = file.path(params$output_dir, "RNA_Pol_II_gene_coverage_subunit_test_results.pdf"))
+```
+
+```{r rna-pol-ii-strain-coverage-t-test, tab.cap="Results from two-sided Student's t-Tests comparing normalised gene coverages between mutant strains and wild-type (WT). Mean WT and mutant values represent the mean normalised coverage values across all predicted ORFs in the genome."}
+rpii.strain_cov_test_kable <- rpii.gene_cov_df %>% 
+  dplyr::group_by(subunit) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(
+    ttest = purrr::map(data,
+                       subunit_wise_t_test_helper,
+                       paired = FALSE,
+                       conf.level = 0.99,
+                       alternative = "two.sided",
+                       values_col = "coverage")
+  ) %>%
+  tidyr::unnest(ttest) %>%
+  dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
+  knitr::kable(
+    digits = Inf,
+    col.names = c("Subunit", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+  ) %>%
+  kableExtra::kable_minimal()
+
+rpii.strain_cov_test_kable
+kableExtra::save_kable(
+  rpii.strain_cov_test_kable,
+  file = file.path(params$output_dir, "RNA_Pol_II_gene_coverage_strain_test_results.pdf"))
+
+```
+
 # Genome-wide Ty1 insertion site analysis
 
 As part of the Ty1 insertion site experiments, genes in the knock-out mutants were rescued by copies on a plasmid. Since these were not located on the chromosome, however, we wanted to remove their contributions to coverage values. These regions are defined in the following table.
@@ -1018,10 +814,30 @@ plot_feature_coverage_bars(
 
 ## RNA Pol III transcribed genes
 
+### Non-unique
+
 ```{r load-pol-iii-data}
 rpiii.cov_columns <- c("library", "seqid", "start", "stop", "feature", "strand", "coverage")
 rpiii.cov_df <- readr::read_tsv(file=p.rpiii.cov_file,
                                col_names = rpiii.cov_columns) %>% 
+  mutate(library = gsub(pattern = "[[:punct:]]",
+                        replacement = '-',
+                        x = library)) %>%
+  filter(
+    feature != "anti-feature",
+    ! library %in% p.libs_for_filtering
+  ) %>%
+  group_by(library, feature) %>% 
+  reframe(coverage = mean(coverage)) %>% 
+  normalise_sequencing_library_coverage(read_counts = read_counts_df,
+                                        read_norm_type = "raw") %>% 
+  dplyr::rename(
+    "coverage.raw" = coverage,
+    "coverage" = coverage.norm
+  )
+
+rpiii.cov_uniq_df <- readr::read_tsv(file=p.rpiii.cov_uniq_file,
+                                     col_names = rpiii.cov_columns) %>% 
   mutate(library = gsub(pattern = "[[:punct:]]",
                         replacement = '-',
                         x = library)) %>%
@@ -1046,6 +862,37 @@ for (panel in unique(hm.meta_df$subunit)) {
     next
   }
   cov_mat <- rpiii.cov_df %>%
+      dplyr::filter(
+        subunit == panel,
+        !grepl(pattern="5S rRNA", x = feature),
+        !grepl(pattern="tRNA", x = feature)
+      ) %>%
+      dplyr::select(tidyselect::all_of(c("feature", "coverage", "library"))) %>% 
+      tidyr::pivot_wider(names_from = "feature",
+                         values_from = "coverage") %>% 
+      tibble::column_to_rownames("library") %>%
+      t()
+
+  draw(plot_genome_coverage_heatmap(
+    cov_mat = cov_mat[rowSums(cov_mat) > 0,],
+    meta_df = hm.meta_df %>% 
+      dplyr::filter(subunit == panel),
+    annotations = c("strain.type", "sugar"),
+    brewer_palette_name = c("Set1", "Set3"),
+    n_sig_digits = 6
+  ))
+}
+```
+
+### Unique
+
+```{r plot-pol-iii-unique-coverage-heatmaps}
+
+for (panel in unique(hm.meta_df$subunit)) {
+  if (panel == "Other") {
+    next
+  }
+  cov_mat <- rpiii.cov_uniq_df %>%
       dplyr::filter(
         subunit == panel,
         !grepl(pattern="5S rRNA", x = feature),
@@ -1202,8 +1049,8 @@ trna_cov_df.mut_vs_wt <- hm.full_cov_df %>%
 ```
 
 ```{r plot-mutant-vs-wt-trna-coverages, fig.cap="Comparison of the mean coverage (i.e., Ty1 insertions) upstream of and within tRNA genes. The size of points are scaled by the absolute difference between mean coverage values between the mutant and wild-type. Black, dashed lines represent the mean wild-type coverage values. Outlier points are labelled. The mean was calculated across all tRNA gene copies for each library (e.g., sixteen copies for alanine-tRNA [tA], four copies of cystine-tRNA [tC]).", fig.height=7, fig.width=10}
-trna_cov_df.mut_vs_wt %>% 
-  filter(proximity != "downstream") %>% 
+trna_cov_df.mut_vs_wt %>%
+  filter(proximity != "downstream") %>%
   ggplot(aes_string(x = "wt.mean", y = "mut.mean", fill = "group", label = "trna.name", group = "group")) +
   geom_line(aes(x = wt.mean,
                 y = wt.mean),
@@ -1242,7 +1089,7 @@ outlier_trna_type_list <- c("tE", "tW", "tC", "tN")
 ```
 
 ```{r trna-coverage-t-test, tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. The tRNAs", paste(outlier_trna_type_list, collapse=', '), "were tested as they were observed to be outliers from the scatterplot figure.")}
-trna_t_test_res_df <- hm.full_cov_df %>%
+trna_cov_df <- hm.full_cov_df %>%
   filter(
     feature.name == 'tRNA',
     ! library %in% p.libs_for_filtering,
@@ -1261,7 +1108,16 @@ trna_t_test_res_df <- hm.full_cov_df %>%
     trna.type %in% outlier_trna_type_list,
     trna_obs > 3
   ) %>%
-  dplyr::select(all_of(c("subunit", "sugar", "strain.type", "group", "trna.name", "trna.type", "coverage.sum"))) %>% 
+  dplyr::select(all_of(c("subunit", "sugar", "strain.type", "group", "trna.name", "trna.type", "coverage.sum")))
+
+trna_cov_stats_df <- trna_cov_df %>%
+  group_by(subunit, group, trna.type) %>%
+  dplyr::reframe(
+    mean = mean(coverage.sum),
+    var = var(coverage.sum)
+  )
+
+trna_t_test_res_df <- trna_cov_df %>%
   dplyr::group_by(subunit, trna.type) %>%
   tidyr::nest() %>%
   dplyr::mutate(
@@ -1273,27 +1129,50 @@ trna_t_test_res_df <- hm.full_cov_df %>%
                        values_col = "coverage.sum")
   ) %>%
   tidyr::unnest(ttest) %>%
-  dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean", "mut.mean")))
+  dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean"))) %>% 
+  left_join(trna_cov_stats_df,
+            by = c("subunit", "trna.type", "group"))
 
 bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
 
 trna_t_test_res_df %>%
-  knitr::kable() 
-  # knitr::kable(
-  #   digits = Inf,
-  #   col.names = c("Subunit", "tRNA", "Library", "p-value", "WT mean", "Mutant mean")
-  # ) %>%
-  # kableExtra::row_spec(bold_rows, bold = TRUE) %>%
-  # kableExtra::kable_minimal()
+  knitr::kable()
 
 kableExtra::save_kable(
   x = trna_t_test_res_df %>%
-    knitr::kable(digits = Inf) %>% 
+    knitr::kable(
+      digits = Inf,
+      col.names = c("Subunit", "tRNA", "Library", "p-value", "WT mean", "Mutant mean", "Mutant variance")
+    ) %>% 
     kableExtra::row_spec(bold_rows, bold = TRUE) %>% 
     kableExtra::kable_minimal(),
   file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
 )
 
+```
+
+```{r least-targeted-trna-genes, tab.cap="The mean and sum normalised read coverage values upstream of and in tRNA genes for each sequencing library. Genes are ordered by the mean and sum coverage values across all libraries."}
+trna_cov_df.mut_vs_wt %>%
+  filter(proximity != "downstream") %>%
+  select(all_of(
+    c("trna.name", "subunit", "group", "proximity", "mut.sum", "mut.mean")
+  )) %>%
+  group_by(trna.name) %>% 
+  dplyr::mutate(
+    trna.mean = mean(mut.mean),
+    trna.sum = sum(mut.sum)
+  ) %>% 
+  ungroup() %>% 
+  tidyr::pivot_wider(
+    names_from = "proximity",
+    values_from = c("mut.sum", "mut.mean")
+  ) %>%
+  arrange(trna.mean, trna.sum) %>% 
+  knitr::kable(col.names = c("tRNA", "subunit", "mutant", "tRNA mean", "tRNA sum", "Mutant sum - gene", "Mutant sum - upstream", "Mutant mean - gene", "Mutant mean - upstream")) %>% 
+  kableExtra::kable_minimal() %>%
+  kableExtra::save_kable(
+  file = file.path(params$output_dir, "all_tRNA_coverage_table.pdf")
+)
 ```
 
 # Appendix
@@ -1620,14 +1499,10 @@ plot_feature_coverage_bars(
 
 ## Coverage at genes transcribed by RNA Polymerase II
 
-```{r separate-rna-pol-ii-gene-insertions}
+```{r separate-rna-pol-ii-gene-insertions, fig.height=6, fig.width=11, fig.cap="Position-wise normalised coverage values for genes transcribed by RNA Polymerase II."}
+target_subunits <- c("RPC34", "RPC160")
+
 rpii.cov_prepped_df <- rpii.cov_df %>%
-  normalise_sequencing_library_coverage(read_counts = read_counts_df,
-                                        read_norm_type = "raw") %>% 
-  dplyr::rename(
-    "coverage.raw" = coverage,
-    "coverage" = coverage.norm
-  ) %>%
   prep_position_wise_feature_coverage_df(
     rpii.gene_df,
     min_gene_coverage = 0,
@@ -1635,28 +1510,40 @@ rpii.cov_prepped_df <- rpii.cov_df %>%
     add_zero_coverage_positions = FALSE,
     summarise_by_position = TRUE
   ) %>%
+  dplyr::rename("coverage" = "coverage.sum") %>% 
   extract_metadata_from_library_names() %>%
   filter(
-    subunit %in% c("RPC34", "RPC160"),
+    subunit %in% target_subunits,
     sugar == "Galactose"
   )
 
-for (lib_name in unique(rpii.cov_prepped_df$library)) {
-  plt <- rpii.cov_prepped_df %>% 
-    filter(library == lib_name) %>%
-    plot_position_coverage(
-      plot_type = "smooth",
-      free_y_scale = TRUE,
-      palette_vals = metadata_palette_list[["library"]],
-      text_gap_size = 120,
-      loess_span = 0.05,
-      label_y_position = 9E-6
-    )
-  plt <- plt +
-    ggplot2::theme(
-      strip.background = element_blank(),
-      strip.text = element_blank()
+for (subunit_name in target_subunits) {
+  for (lib_name in unique(rpii.cov_prepped_df$library)) {
+    if (grepl(pattern = "WT", x = lib_name, ignore.case = FALSE)) {
+      next()
+    }
+    if (!grepl(pattern = subunit_name, x = lib_name, ignore.case = TRUE)) {
+      next()
+    }
+    plt <- rpii.cov_prepped_df %>% 
+      filter(
+        (library %in% c(lib_name) | group == "WT"),
+        subunit == subunit_name
+      ) %>%
+      plot_position_coverage(
+        plot_type = "smooth",
+        free_y_scale = TRUE,
+        palette_vals = metadata_palette_list[["library"]],
+        text_gap_size = 120,
+        loess_span = 0.05,
+        label_y_position = 9E-6
       )
-  plot(plt)
+    plt <- plt +
+      ggplot2::theme(
+        strip.background = element_blank(),
+        strip.text = element_blank()
+      )
+    plot(plt)
+  }
 }
 ```
