@@ -97,6 +97,7 @@ plot_position_coverage <- function(df,
                                    text_gap_size = 100,
                                    loess_span = 0.01,
                                    x_gap_size = 20,
+                                   x_scale = "neighbourhood",
                                    free_y_scale = FALSE,
                                    y_max = NULL) {
   if ( ! plot_type %in% c("smooth", "line", "bar", "density") )
@@ -108,20 +109,34 @@ plot_position_coverage <- function(df,
       y = coverage,
       group = library
     )) +
-    ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
-                        linetype = "dashed") +
-    ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
-                        linetype = "dashed") +
     ggplot2::scale_colour_manual(values = palette_vals) +
     ggplot2::guides(colour = guide_legend(title = "")) +
-    ggplot2::scale_x_continuous(
-      breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
-      labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
-    ) +
-    labs(x = "",
-         y = "Relative number of Ty1 insertions\n(normalised coverage)") +
     theme_bw() +
-    theme(plot.margin = unit(c(2,1,1,1), "lines"))
+    theme(plot.margin = unit(c(2,1,1,1), "lines")) +
+    ggplot2::ylab("Relative number of Ty1 insertions\n(normalised coverage)")
+  
+  if (x_scale == "percent") {
+    plt <- plt +
+      ggplot2::geom_vline(xintercept = 0,
+                          linetype = "dashed") +
+      ggplot2::geom_vline(xintercept = 100,
+                          linetype = "dashed") +
+      ggplot2::scale_x_continuous(
+        breaks = c(buffer_length_bp * -1, 0, 100, buffer_length_bp + 100),
+        labels = c(buffer_length_bp * -1, 0, 100, buffer_length_bp)
+      ) +
+      ggplot2::xlab("Percentage of way through ORF")
+  } else {
+    plt <- plt +
+      ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
+                          linetype = "dashed") +
+      ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
+                          linetype = "dashed") +
+      ggplot2::scale_x_continuous(
+        breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
+        labels = c(buffer_length_bp * -1, 0, buffer_length_bp, 0, buffer_length_bp)
+      )
+  }
   
   if (free_y_scale == TRUE) {
     plt <- plt +
