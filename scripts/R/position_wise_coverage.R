@@ -1,5 +1,6 @@
 buffer_length_bp <- 500
 
+#' Prepare the position-wise feature coverage data frame
 prep_position_wise_feature_coverage_df <- function(df,
                                                    gene_df,
                                                    min_gene_read_count = 1,
@@ -92,6 +93,7 @@ prep_position_wise_feature_coverage_df <- function(df,
 
 plot_position_coverage <- function(df,
                                    palette_vals,
+                                   x_var = rel_position,
                                    plot_type = "smooth",
                                    label_y_position = 0,
                                    text_gap_size = 100,
@@ -105,7 +107,7 @@ plot_position_coverage <- function(df,
   
   plt <- df %>% 
     ggplot(aes(
-      x = rel_position,
+      x = {{x_var}},
       y = coverage,
       group = library
     )) +
@@ -119,18 +121,22 @@ plot_position_coverage <- function(df,
     plt <- plt +
       ggplot2::geom_vline(xintercept = 0,
                           linetype = "dashed") +
-      ggplot2::geom_vline(xintercept = 100,
+      ggplot2::geom_vline(xintercept = 1,
                           linetype = "dashed") +
       ggplot2::scale_x_continuous(
-        breaks = c(buffer_length_bp * -1, 0, 100, buffer_length_bp + 100),
-        labels = c(buffer_length_bp * -1, 0, 100, buffer_length_bp)
+        breaks = c(-1, 0, 0.25, 0.5, 0.75, 1, 2), # Where the ticks should appear on the DisplayPosition axis
+        labels = c("-500 bp", "Start", "25%", "50%", "75%", "End", "+500 bp") # What the ticks should say
       ) +
+      # ggplot2::scale_x_continuous(
+      #   breaks = c(buffer_length_bp * -1, 0, 100, buffer_length_bp + 100),
+      #   labels = c(buffer_length_bp * -1, 0, 100, buffer_length_bp)
+      # ) +
       ggplot2::xlab("Percentage of way through ORF")
   } else {
     plt <- plt +
-      ggplot2::geom_vline(aes(xintercept = min(rel_position) + buffer_length_bp),
+      ggplot2::geom_vline(aes(xintercept = min({{x_var}}) + buffer_length_bp),
                           linetype = "dashed") +
-      ggplot2::geom_vline(aes(xintercept = max(rel_position) - buffer_length_bp),
+      ggplot2::geom_vline(aes(xintercept = max({{x_var}}) - buffer_length_bp),
                           linetype = "dashed") +
       ggplot2::scale_x_continuous(
         breaks = c(buffer_length_bp * -1, 0, buffer_length_bp, buffer_length_bp * 2, buffer_length_bp * 3),
