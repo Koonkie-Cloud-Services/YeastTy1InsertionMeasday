@@ -273,10 +273,17 @@ plot_mutant_and_wildtype_butterfly_helper <- function(df) {
                      span = p.span,
                      level = p.level,
                      .smooth_se = TRUE,
+                     .linewidth = 1,
                      .annot_size = 4) +
+      guides(
+        colour = guide_legend(title = "",
+                              override.aes = c(linewidth=3))
+      ) +
       theme(
         strip.background = element_blank(),
-        strip.text = element_blank()
+        strip.text = element_blank(),
+        legend.background = element_blank()
+        # axis.title.y = element_text(angle = 0, vjust = 0.5)
       )
     if (i < length(mutant_libs)) {
       panel[[i]] <- panel[[i]] +
@@ -286,6 +293,8 @@ plot_mutant_and_wildtype_butterfly_helper <- function(df) {
   }
   
   cowplot::plot_grid(plotlist = panel,
-                     ncol = 1)
+                     ncol = 1,
+                     align = "hv",
+                     axis = "tblr")
 }
 

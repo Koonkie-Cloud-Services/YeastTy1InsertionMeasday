@@ -145,6 +145,11 @@ for (i in seq(1, length(subunit_pal_names))) {
   )
 }
 
+metadata_palette_list[["library"]][["rpc53-delta-2-280-Dex"]] <- "#F2F0F7"
+metadata_palette_list[["library"]][["rpc53-delta-2-280-Gal"]] <- "#CBC9E2"
+metadata_palette_list[["library"]][["Rpc53WT-Dex"]] <- "#807dba"
+metadata_palette_list[["library"]][["RPC53WT-Gal"]] <- "#4a1486"
+
 ```
 
 # Ty1 insertion quantification at tRNA genes
@@ -495,15 +500,23 @@ rpii_rel_pos_df %>%
   ) %>% 
   dplyr::group_by(library, subunit, rel_position) %>% 
   dplyr::reframe(
-    coverage = sum(coverage),
-    coverage.raw = sum(coverage.raw)
+    coverage.sum = sum(coverage),
+    coverage.raw.sum = sum(coverage.raw),
+    coverage.mean = mean(coverage),
+    coverage.raw.mean = mean(coverage.raw)
+  ) %>%
+  dplyr::mutate(
+    across(where(is.numeric), ~ round(.x, 7)),
+    across(contains("raw"), ~ round(.x, 2))
   ) %>% 
   dplyr::rename(
     "Library" = library,
     "Subunit" = subunit,
     "Relative position" = rel_position,
-    "Coverage" = coverage,
-    "Reads mapped" = coverage.raw
+    "Total coverage" = coverage.sum,
+    "Total reads mapped" = coverage.raw.sum,
+    "Mean coverage" = coverage.mean,
+    "Mean reads mapped" = coverage.raw.mean
   ) %>% 
 writexl::write_xlsx(
   path = file.path(params$output_dir, "rpii_rel_pos_cov.xlsx"),
@@ -528,6 +541,7 @@ rpii_gene_cov_table <- rpii_rel_pos_df %>%
   ungroup() %>% 
   arrange(subunit, insertionCount) %>% 
   knitr::kable(
+    caption = "A summary of normalised coverage values for genes transcribed by RNA Polymerase II. Values were calculated from reads mapped the the neighbourhood of these genes (i.e., within ORFs, and 500-bp upstream and downstream). The column 'Insertion Position Count' represents the number of unique genome positions in the neighbourhood a read was mapped to for each library. Coverage values were normalised by sequencing library size.",
     col.names = c(
       "Library",
       "Subunit",
@@ -1207,11 +1221,9 @@ calculate_feature_coverage_between_mutant_and_wt <- function(df) {
 }
 
 trna_cov_df.mut_vs_wt <- hm.full_cov_df %>%
-  filter(
+  dplyr::filter(
     grepl(pattern = 'tRNA', x = feature.name),
-    ! library %in% p.libs_for_filtering
-  ) %>%
-  filter(
+    ! library %in% p.libs_for_filtering,
     sugar == "Galactose",
     subunit != "Other"
   ) %>%
@@ -1239,7 +1251,7 @@ trna_cov_df.mut_vs_wt <- hm.full_cov_df %>%
     )
   ) %>%
   summarise_coverage_by_feature(subunit, strain.type, group, chr, end, strand, trna.name, proximity) %>%
-  dplyr::filter(trna.name != "tX") %>% 
+  dplyr::filter(trna.name != "tX") %>%
   calculate_feature_coverage_between_mutant_and_wt()
 
 ```
@@ -1351,24 +1363,41 @@ kableExtra::save_kable(
 trna_cov_df.mut_vs_wt %>%
   filter(proximity != "downstream") %>%
   select(all_of(
-    c("trna.name", "subunit", "group", "proximity", "mut.sum", "mut.mean")
+    c("trna.name", "subunit", "group", "proximity", "mut.sum", "mut.mean", "wt.sum", "wt.mean")
   )) %>%
-  group_by(trna.name) %>% 
+  group_by(trna.name, proximity) %>% 
   dplyr::mutate(
-    trna.mean = mean(mut.mean),
-    trna.sum = sum(mut.sum)
-  ) %>% 
-  ungroup() %>% 
-  tidyr::pivot_wider(
-    names_from = "proximity",
-    values_from = c("mut.sum", "mut.mean")
+    all_mut.mean = mean(mut.mean),
+    all_mut.sum = sum(mut.sum),
+    across(where(is.numeric), ~ round(.x, 4))
   ) %>%
-  arrange(trna.mean, trna.sum) %>% 
-  knitr::kable(col.names = c("tRNA", "subunit", "mutant", "tRNA mean", "tRNA sum", "Mutant sum - gene", "Mutant sum - upstream", "Mutant mean - gene", "Mutant mean - upstream")) %>% 
-  kableExtra::kable_minimal() %>%
-  kableExtra::save_kable(
-  file = file.path(params$output_dir, "all_tRNA_coverage_table.pdf")
-)
+  ungroup() %>%
+  # tidyr::pivot_wider(
+  #   names_from = "proximity",
+  #   values_from = c("mut.sum", "mut.mean")
+  # ) %>%
+  # arrange(all_mut.mean, all_mut.sum) %>%
+  dplyr::arrange(subunit, group, trna.name, proximity) %>%
+  dplyr::rename(c(
+    "tRNA" = "trna.name",
+    "Mutant name" = "group",
+    "Subunit" = "subunit",
+    "ORF Proximity" = "proximity",
+    "All mutant mean" = "all_mut.mean",
+    "All mutant sum" = "all_mut.sum",
+    "WT mean" = "wt.mean",
+    "WT sum" = "wt.sum",
+    "Mutant mean" = "mut.mean",
+    "Mutant sum" = "mut.sum"
+  )) %>% 
+  writexl::write_xlsx(
+    path = file.path(params$output_dir, "all_tRNA_coverage.xlsx")
+  )
+  # knitr::kable() %>% 
+  # kableExtra::kable_minimal() %>%
+  # kableExtra::save_kable(
+  # file = file.path(params$output_dir, "all_tRNA_coverage_table.pdf")
+  # )
 ```
 
 # Appendix
@@ -1440,9 +1469,19 @@ nuc_pos_df %>%
 
 ### RPC160 butterfly plots
 
+```{r butterfly-figure-dims}
+bt.fig.width = 10
+bt.panel.height = 3.2
+bt.margin_size = 0.2
+bt.fig.units = "in"
+bt_group_df <- bt.cov_df %>%
+  distinct(subunit, group, strain.type, sugar)
+
+```
+
 These are to show side-by-side comparisons of RPC160 mutants to wild-type 
 
-```{r rpc160-butterfly-panel, fig.height=14, fig.width=10, fig.cap="Butterfly plots of the RPC160 mutants compared to the wild-type."}
+```{r rpc160-butterfly-panel, fig.height=16.8, fig.width=10, fig.cap="Butterfly plots of the RPC160 mutants compared to the wild-type."}
 
 bt.cov_df %>%
   filter(subunit == "RPC160") %>%
@@ -1454,11 +1493,23 @@ bt.cov_df %>%
   ungroup() %>%
   plot_mutant_and_wildtype_butterfly_helper()
 
+n_panels <- filter(bt_group_df,
+                   subunit == "RPC160",
+                   group != "WT") %>%
+  nrow()
+n_margins <- n_panels - 1
+ggsave(
+  filename = here("rpc160-butterfly-panel.png"),
+  height = (bt.panel.height * n_panels) + (n_margins * bt.margin_size),
+  width = bt.fig.width,
+  units = bt.fig.units
+)
+
 ```
 
 ### RPC53 butterfly plots
 
-```{r rpc53-butterfly-panel}
+```{r rpc53-butterfly-panel, fig.height=6.6, fig.width=10}
 
 bt.cov_df %>%
   filter(subunit == "RPC53") %>%
@@ -1469,12 +1520,24 @@ bt.cov_df %>%
   ) %>% 
   ungroup() %>%
   plot_mutant_and_wildtype_butterfly_helper()
+
+n_panels <- filter(bt_group_df,
+                   subunit == "RPC53",
+                   group != "WT") %>%
+  nrow()
+n_margins <- n_panels - 1
+ggsave(
+  filename = here("rpc53-butterfly-panel.png"),
+  height = (bt.panel.height * n_panels) + (n_margins * bt.margin_size),
+  width = bt.fig.width,
+  units = bt.fig.units
+)
 ```
 
 
 ### RPC34 butterfly plots
 
-```{r rpc34-butterfly-panel}
+```{r rpc34-butterfly-panel, fig.height=10, fig.width=10}
 bt.cov_df %>%
   filter(subunit == "RPC34") %>%
   dplyr::group_by(subunit, group, strain.type, sugar, library, proximity, strand, rel.position) %>%
@@ -1484,6 +1547,18 @@ bt.cov_df %>%
   ) %>% 
   ungroup() %>%
   plot_mutant_and_wildtype_butterfly_helper()
+
+n_panels <- filter(bt_group_df,
+                   subunit == "RPC34",
+                   group != "WT") %>%
+  nrow()
+n_margins <- n_panels - 1
+ggsave(
+  filename = here("rpc34-butterfly-panel.png"),
+  height = (bt.panel.height * n_panels) + (n_margins * bt.margin_size),
+  width = bt.fig.width,
+  units = bt.fig.units
+)
 ```
 
 ## Genome-wide Ty1 insertion site analysis
