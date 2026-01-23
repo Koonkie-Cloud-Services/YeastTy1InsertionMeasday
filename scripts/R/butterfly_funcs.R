@@ -210,8 +210,8 @@ plot_butterfly <- function(df,
       se = .smooth_se,
       level = level,
       linewidth = .linewidth) +
-    xlab("Relative position from TSS (bp)") +
-    ylab("Normalized nucleotide coverage") +
+    xlab("Relative position (bp)") +
+    ylab("Ty1 insertion") +
     ggplot2::facet_wrap(~subunit, scales = "fixed") +
     scale_x_continuous(breaks = seq(0, 2000, by = 250),
                        labels = seq(-1000, 1000, by=250)) +
@@ -219,11 +219,11 @@ plot_butterfly <- function(df,
                                        y = y,
                                        forward = forward),
                           data = .get_trna_tss_df()) +
-    gggenes::geom_feature_label(ggplot2::aes(x = x,
-                                             y = y,
-                                             forward = forward,
-                                             label = label),
-                                data = .get_trna_tss_df()) +
+    # gggenes::geom_feature_label(ggplot2::aes(x = x,
+    #                                          y = y,
+    #                                          forward = forward,
+    #                                          label = label),
+    #                             data = .get_trna_tss_df()) +
     gggenes::geom_gene_arrow(data = .get_trna_gene_df(trna_feat_df),
                              ggplot2::aes(xmin = xmin,
                                           xmax = xmax,
@@ -273,7 +273,7 @@ plot_mutant_and_wildtype_butterfly_helper <- function(df) {
                      span = p.span,
                      level = p.level,
                      .smooth_se = TRUE,
-                     .linewidth = 1,
+                     .linewidth = 0.5,
                      .annot_size = 4) +
       guides(
         colour = guide_legend(title = "",
