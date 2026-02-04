@@ -26,6 +26,10 @@ extract_alignments() {
     
     local BAM_BASE=$(basename "$BAM_FILE" .bam)
     local OUTPUT_FILE="$OUTPUT_DIR/${BAM_BASE}_trna_alignments.sam"
+    if [ -f $OUTPUT_FILE ]; then
+        echo "Skipping $BAM_BASE"
+        return
+    fi
     
     echo "Processing: $BAM_BASE"
     
@@ -50,3 +54,30 @@ ls $BAM_PATTERN | parallel -j $NUM_JOBS extract_alignments {} $OUTPUT_DIR $BED_F
 
 echo "All extractions completed!"
 echo "Output files are in: $OUTPUT_DIR"
+
+# Calculate and print average percentage of specific sequences in the alignments
+echo "Calculating average percentage of specific sequences in alignments..."
+MOTIF_SUMMARY_FILE="$OUTPUT_DIR/motif_summary.tsv"
+MOTIF="AACATGG"
+# Create reverse complement of MOTIF
+MOTIF_RC=$(echo "$MOTIF" | tr 'ATCG' 'TAGC' | rev)
+ls $OUTPUT_DIR/*_trna_alignments.sam > /dev/null 2>&1 || { echo "No alignment files found for motif calculation."; exit 1; }
+echo -e "Filename\tTotal_Alignments\tPercentage_$MOTIF" > "$MOTIF_SUMMARY_FILE"
+for f in $OUTPUT_DIR/*_trna_alignments.sam; do
+    fname=$(basename "$f")
+    echo "Processing motif calculation for $fname... "
+
+    lines=$( grep -cv "^@" $f )
+    # grep "$MOTIF\|$MOTIF_RC" -c $f || true
+    hits=$(grep "$MOTIF\|$MOTIF_RC" -c $f || true)
+    if [ $hits -eq 0 ] || [ $lines -eq 0 ]; then
+        perc_hits=0
+    else
+        perc_hits=$(echo "scale=4;100 * $hits / $lines" | bc)
+    fi
+    echo -e "$fname\t$lines\t$perc_hits" >> "$MOTIF_SUMMARY_FILE"
+    echo "Completed motif calculation for $fname: $hits / $lines"
+done
+
+echo -e "\nAverage percentage of $MOTIF and its reverse complement across all alignments:"
+awk '{ sum += $3 } END { if (NR > 0) print sum / NR }' "$MOTIF_SUMMARY_FILE"
