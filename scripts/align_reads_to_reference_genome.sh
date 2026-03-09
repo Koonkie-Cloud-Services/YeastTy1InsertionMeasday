@@ -94,6 +94,7 @@ process_sample() {
 
 	log_message info $'\tSamtools sorting BAM'
 	run_command samtools view -F 0x900 -@ "$nslots" -ubS "${working_dir}/${sample_id}.sam" | \
+		samtools view -e '[NM] <= 1' -@ "$nslots" -ubS - | \  # Remove mappings with more than 1 mismatch
 		samtools sort - -@ "$nslots" -T "${working_dir}/${sample_id}.sorted" \
 		-O BAM -o "${working_dir}/${sample_id}.sorted.bam"
 
@@ -116,19 +117,7 @@ process_sample() {
 	run_command samtools flagstat "${working_dir}/${sample_id}_dupremoved.sorted.bam" > "${working_dir}/${sample_id}_dupremoved.sorted.bam.flagstat"
 
 	log_message info $'\tRemoving non-unique mapping reads'
-	run_command samtools view -q 30 "${working_dir}/${sample_id}.sorted.bam" -o "${working_dir}/${sample_id}_uniq.sorted.bam"
-	run_command samtools index "${working_dir}/${sample_id}_uniq.sorted.bam"
-	run_command samtools flagstat "${working_dir}/${sample_id}_uniq.sorted.bam" > "${working_dir}/${sample_id}_uniq.sorted.bam.flagstat"
-
-	log_message info $'\tPicard MarkDuplicates for unique reads'
-	rm -rf "$tmpdir"
-	mkdir "$tmpdir"
-	run_command picard MarkDuplicates \
-		I="${working_dir}/${sample_id}_uniq.sorted.bam" \
-		REMOVE_DUPLICATES=true TMP_DIR="$tmpdir" \
-		M="${working_dir}/${sample_id}_uniq_DuplicateResults.txt" \
-		O="${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam"
-
+	run_command samtools view -q 30 "${working_dir}/${sample_id}_dupremoved.sorted.bam" -o "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam"
 	run_command samtools index "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam"
 	run_command samtools flagstat "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam" > "${working_dir}/${sample_id}_dupremoved_uniq.sorted.bam.flagstat"
 
