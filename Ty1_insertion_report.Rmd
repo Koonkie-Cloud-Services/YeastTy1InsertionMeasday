@@ -61,6 +61,7 @@ source(here("scripts", "R", "position_wise_coverage.R"))
 ```{r load-parameters}
 # GLOBAL
 p.library_size_file <- here(params$data_dir, "input", "library_size_data.xlsx")
+p.alignment_stats_file <- here(params$data_dir, "output", "summarised_read_counts.tsv")
 p.custom_feature_file <- here(params$data_dir, "input", "custom_feature_annotations.xlsx")
 p.sample_id_mapping_file <- here(params$data_dir, "input", "hiseq_sample_id_map.tsv")
 p.read_norm_type <- "raw"
@@ -105,7 +106,33 @@ if (! dir.exists(params$output_dir) )
 ```
 
 ```{r load-library-depth-data}
-read_counts_df <- readxl::read_xlsx(path = p.library_size_file) %>% 
+mapped_counts_df <- readr::read_delim(
+  file = p.alignment_stats_file,
+  delim = "\t",
+  show_col_types = FALSE
+) |> 
+  dplyr::rename(any_of(c("library" = "Unique_ID"))) |> 
+  group_by(library) |> 
+  summarise(
+    Dedup = sum(Deduplicated_Reads),
+    Dedup_unique = sum(Unique_Reads)
+  )
+
+read_counts_df <- readxl::read_xlsx(path = p.library_size_file) |> 
+  select(all_of(
+    c("library", "raw_f1", "raw_f2", "raw", "AACA", "AACA_20bp")
+  )) |> 
+  mutate(
+    original_library = library
+  ) |> 
+  .fix_library_names() |> 
+  dplyr::left_join(
+    y = mapped_counts_df |> 
+      .fix_library_names(),
+    by = "library"
+  ) |> 
+  select(!library) |> 
+  rename("library" = original_library) |> 
   pivot_longer(where(is.numeric),
                names_to = "norm_type",
                values_to = "seq_library_size") %>%
@@ -113,7 +140,7 @@ read_counts_df <- readxl::read_xlsx(path = p.library_size_file) %>%
     library = gsub(pattern = "[[:punct:]]",
                    replacement = '-',
                    x = library)
-  ) %>% 
+  ) %>%
   extract_metadata_from_library_names()
 ```
 
@@ -158,6 +185,29 @@ metadata_palette_list[["library"]][["Rpc53WT-Dex"]] <- "#fbb4b9"
 metadata_palette_list[["library"]][["rpc53-delta-2-280-Gal"]] <- "#f768a1"
 metadata_palette_list[["library"]][["RPC53WT-Gal"]] <- "#ae017e"
 
+```
+
+```{r define-gene-lists}
+rdna_locus_gene_list <- c(
+  "5.8S ribosomal RNA",
+  "5S rRNA",
+  "NTS1(misc feature)",
+  "18S rRNA",
+  "NTS2(misc feature)",
+  "25S rRNA"
+)
+
+nonunique_coverage_heatmap_blackout_features <- c(
+  "NTS1(misc feature)",
+  "NTS2(misc feature)",
+  "5S rRNA",
+  "5.8S ribosomal RNA",
+  "18S rRNA",
+  "25S rRNA",
+  "tRNA",
+  "tRNA upstream",
+  "tRNA downstream"
+)
 ```
 
 # Ty1 insertion quantification at tRNA genes
@@ -338,6 +388,7 @@ bt.strand_diff_df %>%
 
 Ty1 retrotransposons use the RNA polymerase machinery to insert into the genome upstream of the genes transcribed by the respective RNA polymerase enzyme -- in this case, RNA polymerase III. The RNA polymerase III subunits  [RPC160](https://www.yeastgenome.org/locus/RPC160), [RPC53](https://www.yeastgenome.org/locus/S000002309) and [RPC34](https://www.yeastgenome.org/locus/RPC34) are all necessary for transcription. To test which subunits associate with Ty1 retrotransposon's insertion machinery, each of the three subunit-encoding genes were systematically mutated and its consequent impact on insertion was analysed. A baseline of no insertion was inferred from *S. cerevisae* grown on dextrose.
 
+TODO: Are the outliers here tW?
 
 ```{r mutant-vs-wildtype-insertion-box-plot, fig.cap="Comparison of normalised coverage between the mutant and wild-type strains for each subunit group. For this box-plot, coverage values for only the upstream regions were used as insertion in the downstream was always less. Coverage across all tRNA genes on both strands was summed, yielding 275 data points for each library: one for each tRNA gene.", fig.height=5, fig.width=7}
 bt.cov_df %>% 
@@ -412,6 +463,8 @@ cowplot::plot_grid(dist_plot.a, dist_plot.b,
                    rel_heights = c(1,1),
                    rel_widths = c(1, 3))
 ```
+
+TODO: group p-values as less than 0.001
 
 ```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference between the tRNA coverages of mutant and wild-type strains."}
 
@@ -687,6 +740,9 @@ rpii.cov_df %>%
 
 ```
 
+TODO: Update the figure caption to include the number of ORFs analysed
+TODO: Stretch out the ORF region
+
 ```{r plot-relative-position-coverage, fig.cap="Normalised coverage values across the lengths of genes transcribed by RNA polymerase II, relative to their predicted ORF length. Coverage values were summed across relative ORF position (i.e., upstream, percentage through the ORF, or downstream)."}
 get_percentage_display_positions <- function(df) {
   df %>% 
@@ -831,6 +887,8 @@ if (!render_pdf) {
 }
 ```
 
+TODO: Make sure that the values in this table agree with figure 7 - am I summing at each position before calculating the means?
+
 ```{r rna-pol-ii-strain-coverage-t-test, tab.cap="Results from two-sided Student's t-Tests comparing normalised gene coverages between mutant strains and wild-type (WT). Mean WT and mutant values represent the mean normalised coverage values across all predicted ORFs in the genome."}
 rpii.strain_cov_test_kable <- rpii.gene_cov_df %>% 
   dplyr::group_by(subunit) %>%
@@ -937,20 +995,7 @@ hm.meta_df <- hm.cov_df %>%
 ```
 
 
-```{r plot-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
-
-nonunique_coverage_heatmap_blackout_features <- c(
-  "NTS1(misc feature)",
-  "NTS2(misc feature)",
-  "5S rRNA",
-  "5.8S ribosomal RNA",
-  "18S rRNA",
-  "25S rRNA",
-  "tRNA",
-  "tRNA upstream",
-  "tRNA downstream"
-)
-
+```{r plot-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Coverage values were derived from the deduplicated read alignments (i.e., includes non-unique alignments)."}
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(
     cov_mat = hm.cov_df %>%
@@ -1005,6 +1050,56 @@ writexl::write_xlsx(
 ```
 
 
+The following table shows the percentage of Ty1 insertions within each feature type: tRNA genes (upstream and downstream), RNA Pol II genes, rDNA, Ty1 retrotransposons, LTRs, RNA Pol III genes (excluding tRNA genes), anti-features, and "Other" representing everything else.
+
+```{r}
+genome_feature_read_perc_df <- hm.cov_df |>
+  dplyr::filter(feature.name != "gene") |>
+  dplyr::mutate(
+    category = case_when(
+      feature.name %in% c("tRNA", "tRNA upstream", "tRNA downstream") ~ feature.name,
+      feature.name %in% rdna_locus_gene_list ~ "rDNA",
+      grepl(pattern = "LTR", x = feature.name) ~ "LTR",
+      feature.name == "anti-feature" ~ "anti-feature",
+      feature.name == "Ty1(retrotransposon)" ~ "Ty1 retrotransposon",
+      grepl(pattern = "retrotransposon", x = feature.name) ~ "Other retrotransposons",
+      .default = "Other feature"
+    )) |>
+  dplyr::group_by(library, category) |> 
+  dplyr::summarise(read_count = sum(read_count)) |> 
+  dplyr::select(all_of(c("library", "category", "read_count"))) |> 
+  # Add the alignments to RNA Pol II genes
+  dplyr::bind_rows(
+    rpii_rel_pos_df |> 
+      .fix_library_names() |> 
+      dplyr::mutate(
+        category = case_when(
+          rel_position < 0 ~ "RNA Pol II gene upstream",
+          rel_position > 100 ~ "RNA Pol II gene downstream",
+          .default = "RNA Pol II gene"
+        )
+      ) |> 
+      group_by(library, category) |> 
+      summarise(
+        read_count = sum(coverage.raw)
+      )
+  ) |>
+  dplyr::left_join(
+    read_counts_df |>
+      .fix_library_names() |> 
+      filter(norm_type == "Dedup") |> 
+      select(all_of(
+        c("library", "mapped_dedup_reads" = "seq_library_size")
+      )),
+    by = "library") |> 
+  dplyr::mutate(
+    readPerc = round(100 * read_count / mapped_dedup_reads, 2)
+  )
+writexl::write_xlsx(
+  genome_feature_read_perc_df,
+  path = here("genome_feature_read_perc.dedup.v1.xlsx")
+)
+```
 
 ## Bar-plot
 
@@ -1059,7 +1154,7 @@ plot_feature_coverage_bars(
 
 ```{r load-pol-iii-data}
 rpiii.cov_columns <- c("library", "seqid", "start", "stop", "feature", "strand", "coverage")
-rpiii.cov_df <- readr::read_tsv(file=p.rpiii.cov_file,
+rpiii.cov_df <- readr::read_tsv(file = p.rpiii.cov_file,
                                col_names = rpiii.cov_columns) %>% 
   mutate(library = gsub(pattern = "[[:punct:]]",
                         replacement = '-',
@@ -1127,6 +1222,9 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 ### Unique
 
+TODO: send table with mean coverage values for each element
+TODO: add figure captions to these heatmaps
+
 ```{r plot-pol-iii-unique-coverage-heatmaps}
 
 for (panel in unique(hm.meta_df$subunit)) {
@@ -1136,8 +1234,8 @@ for (panel in unique(hm.meta_df$subunit)) {
   cov_mat <- rpiii.cov_uniq_df %>%
       dplyr::filter(
         subunit == panel,
-        !grepl(pattern="5S rRNA", x = feature),
-        !grepl(pattern="tRNA", x = feature)
+        !grepl(pattern = "5S rRNA", x = feature),
+        !grepl(pattern = "tRNA", x = feature)
       ) %>%
       dplyr::select(tidyselect::all_of(c("feature", "coverage", "library"))) %>% 
       tidyr::pivot_wider(names_from = "feature",
@@ -1555,6 +1653,9 @@ trna_cov_df.mut_vs_wt %>%
   )
 ```
 
+TODO: facet by library rather than subunit
+TODO: reorder the x-axis for each library - not the same order for each.
+
 ```{r trna-insertion-boxplots, fig.cap="Very few regions upstream of tRNA genes had significantly more Ty1 insertions in mutants than wild-type. Upstream regions of tW tRNA genes recruited the most Ty1 insertions across all strains. Normalised coverage values were calculated by dividing the total number of reads mapped by the number of base-pairs in the upstream region (1000) and the millions of sequenced reads."}
 trna_named_cov_df |> 
   summarise_coverage_by_feature(subunit, strain.type, group, chr, end, strand, trna.name, proximity) %>%
@@ -1818,16 +1919,9 @@ The figure above shows that there is less differentiation between the different 
 
 ### Insertion at genes in the rDNA locus
 
-```{r rdna-locus-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
+TODO: stats comparing the mutants to the wild-types for Ty1 (LTR)
 
-rdna_locus_gene_list <- c(
-  "5.8S ribosomal RNA",
-  "5S rRNA",
-  "NTS1(misc feature)",
-  "18S rRNA",
-  "NTS2(misc feature)",
-  "25S rRNA"
-)
+```{r rdna-locus-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs."}
 
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(
@@ -1867,12 +1961,12 @@ rdna_cov_df <- read.table(p.rdna_count_file,
            sep = "_") %>% 
   left_join(sample_name_map,
             by = c("runId", "barcode")) %>% 
-  select(tidyselect::all_of(c("library"="uniqueId", "ReadCount"))) %>%
+  select(tidyselect::all_of(c("library" = "uniqueId", "ReadCount"))) %>%
   extract_metadata_from_library_names() %>% 
   left_join(read_counts_df %>% 
               select(all_of(c("library", "norm_type", "seq_library_size"))) %>% 
               filter(norm_type == p.read_norm_type),
-            by="library") %>%
+            by = "library") %>%
   mutate(
     coverage.norm = round(100 * ReadCount / seq_library_size, 3)
   ) %>% 
@@ -2020,4 +2114,12 @@ for (subunit_name in target_subunits) {
     plot(plt)
   }
 }
+```
+
+### Percentage of insertions across genome features
+
+TODO: Create a table breaking down the normalised coverage values as percentages across genome features
+
+```{r genome-feature-percentrage, tab.cap=""}
+
 ```
