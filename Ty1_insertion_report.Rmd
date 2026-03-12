@@ -98,6 +98,9 @@ p.bt.npc_file <- here(params$data_dir, "input", "41586_2012_BFnature11142_MOESM2
 
 # RDNA LOCUS
 p.rdna_count_file <- here(params$data_dir, "output", "genome_coverage", "rDNA_locus_counts.tsv")
+
+# GENOME FEATURES
+p.genome_feature_bed_file <- here(params$data_dir, "output", "genome_coverage", "output", "feature_locations", "Saccharomyces_cerevisiae_S288C_features.bed")
 ```
 
 ```{r create-output-directories}
@@ -940,6 +943,44 @@ feature_filter_df %>%
 
 ```
 
+```{r report-genome-feature-space}
+gff_df <- readr::read_delim(
+  col_names = c("seqId", "start", "end", "featureName", "strand"),
+  file = p.genome_feature_bed_file,
+  delim = "\t",
+  show_col_types = FALSE,
+) |> 
+  dplyr::mutate(
+    featureType = case_when(
+      featureName %in% c("tRNA", "tRNA upstream", "tRNA downstream") ~ featureName,
+      grepl(x = featureName, pattern = "gene") ~ "gene",
+      featureName %in% rdna_locus_gene_list ~ "rDNA",
+      grepl(pattern = "LTR", x = featureName) ~ "LTR",
+      featureName == "anti-feature" ~ "anti-feature",
+      featureName == "Ty1(retrotransposon)" ~ "Ty1 retrotransposon",
+      grepl(pattern = "retrotransposon", x = featureName) ~ "Other retrotransposons",
+      .default = "Other feature"
+    ),
+    length = end - start,
+  )
+
+genome_feature_size_df <- gff_df |> 
+  group_by(featureType) |> 
+  summarise(
+    totalLength = sum(length)
+  ) |>
+  ungroup() |>
+  mutate(
+    genomeLengthPerc = round(100 * totalLength / sum(totalLength), 2)
+  ) |> 
+  dplyr::rename(
+    "Feature type" = featureType,
+    "Length of features (bp)" = totalLength,
+    "Percentage of genome (%)" = genomeLengthPerc
+  )
+
+```
+
 ## Heatmap
 
 ```{r aggregate-feature-neighbourhoods}
@@ -1096,7 +1137,10 @@ genome_feature_read_perc_df <- hm.cov_df |>
     readPerc = round(100 * read_count / mapped_dedup_reads, 2)
   )
 writexl::write_xlsx(
-  genome_feature_read_perc_df,
+  list(
+    "Feature coverage" = genome_feature_read_perc_df,
+    "Feature sizes" = genome_feature_size_df
+  ),
   path = here("genome_feature_read_perc.dedup.v1.xlsx")
 )
 ```
