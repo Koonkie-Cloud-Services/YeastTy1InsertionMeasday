@@ -96,5 +96,8 @@ ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 	$p_o_aln_dir "${p_o_coverage_dir}/rDNA_locus_counts.tsv"
 unlink $p_o_coverage_dir/$( basename $input_dir)
 
+# Update the read and alignment counts for all libraries
+./scripts/summarise_read_counts_into_table.sh
+
 # Render the RMarkdown report to create figures
 Rscript -e "rmarkdown::render('./Ty1_insertion_report.Rmd')"
