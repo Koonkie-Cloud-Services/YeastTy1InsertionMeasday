@@ -36,7 +36,7 @@ if ! command -v bedtools &> /dev/null; then
 fi
 
 # Define test paths
-TEST_DIR="tests"
+TEST_DIR="scripts/tests"
 DATA_DIR="$TEST_DIR/data"
 OUTPUT_DIR="$TEST_DIR/output"
 RESULTS_DIR="$TEST_DIR/results"
@@ -58,7 +58,7 @@ echo "[INFO] Output: $ANTI_FEATURES_OUTPUT"
 echo ""
 
 # Run the create_anti_features.sh script
-bash ./create_anti_features.sh "$GENES_BED" "$CHR_LENGTHS" "$ANTI_FEATURES_OUTPUT"
+bash scripts/create_anti_features.sh "$GENES_BED" "$CHR_LENGTHS" "$ANTI_FEATURES_OUTPUT"
 
 # Validate output exists and is not empty
 if [ ! -f "$ANTI_FEATURES_OUTPUT" ]; then

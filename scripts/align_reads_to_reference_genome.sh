@@ -94,7 +94,7 @@ process_sample() {
 
 	log_message info $'\tSamtools sorting BAM'
 	run_command samtools view -F 0x900 -@ "$nslots" -ubS "${working_dir}/${sample_id}.sam" | \
-		samtools view -e '[NM] <= 1' -@ "$nslots" -ubS - | \  # Remove mappings with more than 1 mismatch
+		samtools view -e '[NM] <= 1' -@ "$nslots" -ubS - | \
 		samtools sort - -@ "$nslots" -T "${working_dir}/${sample_id}.sorted" \
 		-O BAM -o "${working_dir}/${sample_id}.sorted.bam"
 

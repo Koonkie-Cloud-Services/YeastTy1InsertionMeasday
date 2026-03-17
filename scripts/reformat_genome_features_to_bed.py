@@ -9,7 +9,7 @@ from collections import namedtuple
 
 import gffutils
 from gffutils import inspect
-from gffutils import feature
+from gffutils import feature as feature_mod
 from gffutils import create
 
 FEATURE_TYPE_NAME_MAP = {
@@ -42,6 +42,19 @@ SKIPPED_FEATURE_TYPES = [
     "region",
     "transcript"
 ]
+
+# The following feature types are replicated on both
+# strands to ensure that they are covered by anti-features
+# regardless of the strand of the original feature
+STRAND_REPLICATED_FEATURE_TYPES = [
+    "telomere",
+    "subtelomere",
+    "pericentromere",
+    "centromere",
+    "mobile_genetic_element",
+    "long_terminal_repeat"
+]
+
 VALID_FEATURE_TYPES = set(FEATURE_TYPE_NAME_MAP)
 VALID_FEATURE_TYPES.update(set(SKIPPED_FEATURE_TYPES))
 TMP_GFF_PATH = "tmp.gff"
@@ -132,6 +145,23 @@ def format_feature_as_bed(feature: gffutils.Feature) -> str:
     ]
     return "\t".join([str(i) for i in bed_row])
 
+def should_replicate_on_both_strands(feature: gffutils.Feature) -> bool:
+    """Check if a feature type should be replicated on both strands"""
+    return feature.featuretype in STRAND_REPLICATED_FEATURE_TYPES
+
+def create_opposite_strand_feature(feature: gffutils.Feature) -> gffutils.Feature:
+    """Create a copy of the feature with the opposite strand
+    
+    The feature ID and all other properties remain the same, only the strand is flipped.
+    """
+    opposite_strand = '-' if feature.strand == '+' else '+'
+    opposite_feature = feature_mod.feature_from_line(
+        f"{feature.chrom}\t{feature.source}\t{feature.featuretype}\t{feature.start}\t{feature.stop}\t.\t{opposite_strand}\t.\tID={feature.id}"
+    )
+    opposite_feature.id = feature.id
+    opposite_feature.featuretype = feature.featuretype
+    return opposite_feature
+
 def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> None:
     outf = open(bed_file, "w")
 
@@ -189,6 +219,10 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             except TypeError:
                 raise TypeError(f"Feature '{ft_inst.id}' has an invalid type: {type(annot_features[ft_inst.id])}")
             outf.write(format_feature_as_bed(ft_inst) + "\n")
+            # Replicate on opposite strand if needed
+            if should_replicate_on_both_strands(ft_inst):
+                opposite_feature = create_opposite_strand_feature(ft_inst)
+                outf.write(format_feature_as_bed(opposite_feature) + "\n")
 
     if annot_features:
         for _ft_id, ft_list in annot_features.items():
@@ -198,6 +232,10 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
                 if ft_inst.chrom in chrom_skip:
                     continue
                 outf.write(format_feature_as_bed(ft_inst) + "\n")
+                # Replicate on opposite strand if needed
+                if should_replicate_on_both_strands(ft_inst):
+                    opposite_feature = create_opposite_strand_feature(ft_inst)
+                    outf.write(format_feature_as_bed(opposite_feature) + "\n")
 
     print(f"{acc} features written to {bed_file}")
     outf.close()
@@ -382,7 +420,7 @@ def create_buffered_features(ft_inst: gffutils.Feature,
     for prefix, coords in zip(prefixes, [[us_start, us_stop], [ds_start, ds_stop]]):
         ft_type = f"{prefix}{prefix_sep}{ft_inst.featuretype}"
         ft_id = f"{ft_inst.id}{prefix_sep}{prefix}"
-        buff_feat = feature.feature_from_line(
+        buff_feat = feature_mod.feature_from_line(
                 f"{ft_inst.chrom}\t{ft_inst.source}\t{ft_type}\t{coords[0]}\t{coords[1]}\t.\t{ft_inst.strand}\t.\tID={ft_id}"
             )
         buff_feat.id = ft_id
@@ -492,7 +530,7 @@ def create_subtelomere_features(gff_db: gffutils.FeatureDB, **kwargs) -> Dict[st
                 raise ValueError(f"Invalid strand: {ft_inst.strand}")
 
         subtelomere_features[subtelomere_name] += [
-                feature.feature_from_line(
+                feature_mod.feature_from_line(
                     f"{ft_inst.chrom}\t{ft_inst.source}\tsubtelomere\t{start}\t{stop}\t.\t{ft_inst.strand}\t.\tID={subtelomere_name}-{len(subtelomere_features[subtelomere_name])}"
                 )
             ]
@@ -538,7 +576,7 @@ def update_gff_with_additional_annotations(gff_db: gffutils.FeatureDB,
         else:
             ft_id = name
 
-        ft = feature.feature_from_line(
+        ft = feature_mod.feature_from_line(
             f"{chrom}\t.\t{name}\t{start}\t{stop}\t.\t{strand}\t.\tID={ft_id}"
         )
         ft.id = ft_id

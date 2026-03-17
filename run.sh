@@ -57,6 +57,9 @@ if [ ! -d "$input_dir/alignments" ] || [ -z "$(ls -A $input_dir/alignments/*.bam
 	exit 1
 fi
 
+# Create data/output/summarised_read_counts.tsv
+./scripts/summarise_read_counts_into_table.sh
+
 # Download genome annotation files from NCBI
 ./scripts/download_reference_genome_data.sh $p_o_features_dir
 

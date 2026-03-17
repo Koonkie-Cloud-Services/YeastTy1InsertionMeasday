@@ -49,11 +49,109 @@ extract_alignments() {
 # Export function for parallel
 export -f extract_alignments
 
+# Function to process SAM files and extract adjacent sequences
+process_adjacent_sequences() {
+    local SAM_FILE="$1"
+    local BED_FILE="$2"
+    local OUTPUT_DIR="$3"
+    
+    local SAM_BASE=$(basename "$SAM_FILE" .sam)
+    local TSV_OUTPUT="$OUTPUT_DIR/${SAM_BASE}_adjacent_sequences.tsv"
+    
+    echo "Processing adjacent sequences for: $SAM_BASE"
+    
+    # Create TSV header
+    echo -e "read_name\talignment_start\ttrna_gene\tadjacent_sequence\tadjacent_sequence_length" > "$TSV_OUTPUT"
+    
+    # Load tRNA regions into associative arrays for quick lookup
+    declare -A trna_starts trna_ends trna_names trna_chrs
+    while IFS=$'\t' read -r chr start end name score strand; do
+        if [[ "$chr" != "chr" ]]; then  # Skip header
+            local key="${chr}:${start}-${end}"
+            trna_starts["$key"]=$start
+            trna_ends["$key"]=$end
+            trna_names["$key"]=$name
+            trna_chrs["$key"]=$chr
+        fi
+    done < "$BED_FILE"
+    
+    # Process each alignment in SAM file
+    grep -v '^@' "$SAM_FILE" | while IFS=$'\t' read -r qname flag rname pos mapq cigar rnext pnext tlen seq qual rest; do
+        # Parse alignment start position (convert from 1-based to 0-based for calculations)
+        local align_start=$((pos - 1))
+        local align_end=$((align_start + ${#seq}))
+        
+        # Find overlapping tRNA gene
+        local overlapping_gene=""
+        local gene_start=0
+        local gene_end=0
+        
+        for key in "${!trna_chrs[@]}"; do
+            if [[ "${trna_chrs[$key]}" == "$rname" ]]; then
+                local g_start=${trna_starts[$key]}
+                local g_end=${trna_ends[$key]}
+                
+                # Check for overlap (even partial)
+                if [[ $align_start -lt $g_end && $align_end -gt $g_start ]]; then
+                    overlapping_gene=${trna_names[$key]}
+                    gene_start=$g_start
+                    gene_end=$g_end
+                    break
+                fi
+            fi
+        done
+        
+        # Calculate adjacent sequence
+        local adjacent_seq=""
+        if [[ -n "$overlapping_gene" ]]; then
+            # Calculate overlap boundaries relative to read
+            local overlap_start_in_read=$((gene_start > align_start ? gene_start - align_start : 0))
+            local overlap_end_in_read=$((gene_end < align_end ? gene_end - align_start : ${#seq}))
+            
+            # Extract sequences before and after the overlap
+            local upstream_seq=""
+            local downstream_seq=""
+            
+            if [[ $overlap_start_in_read -gt 0 ]]; then
+                upstream_seq=${seq:0:$overlap_start_in_read}
+            fi
+            
+            if [[ $overlap_end_in_read -lt ${#seq} ]]; then
+                downstream_seq=${seq:$overlap_end_in_read}
+            fi
+            
+            adjacent_seq="${upstream_seq};${downstream_seq}"
+            len_adj=$(( ${#adjacent_seq} - 1 ))
+        else
+            # No overlap found, keep entire sequence
+            adjacent_seq="$seq"
+            overlapping_gene="NO_OVERLAP"
+            len_adj=${#adjacent_seq}
+        fi
+        
+        # Output to TSV
+        echo -e "$qname\t$pos\t$overlapping_gene\t$adjacent_seq\t$len_adj" >> "$TSV_OUTPUT"
+    done
+    
+    echo "Adjacent sequences processed: $TSV_OUTPUT"
+}
+
+# Export function for parallel
+export -f process_adjacent_sequences
+
 # Run extraction in parallel
 ls $BAM_PATTERN | parallel -j $NUM_JOBS extract_alignments {} $OUTPUT_DIR $BED_FILE
 
 echo "All extractions completed!"
+
+# Process adjacent sequences for all SAM files
+echo "Processing adjacent sequences..."
+ls "$OUTPUT_DIR"/*_trna_alignments.sam | parallel -j $NUM_JOBS process_adjacent_sequences {} $BED_FILE $OUTPUT_DIR
+
+echo "Adjacent sequence processing completed!"
 echo "Output files are in: $OUTPUT_DIR"
+
+
 
 # Calculate and print average percentage of specific sequences in the alignments
 echo "Calculating average percentage of specific sequences in alignments..."

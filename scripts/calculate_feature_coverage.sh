@@ -1,7 +1,32 @@
 #!/bin/bash
 
+##              ##
+# LOGGING FUNCTION #
+##              ##
+log() {
+    local level=$1
+    shift
+    local message="$@"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    case "${level^^}" in
+        INFO)
+            echo "[$timestamp] [INFO] $message"
+            ;;
+        WARNING|WARN)
+            echo "[$timestamp] [WARNING] $message" >&2
+            ;;
+        ERROR)
+            echo "[$timestamp] [ERROR] $message" >&2
+            ;;
+        *)
+            echo "[$timestamp] [UNKNOWN] $message"
+            ;;
+    esac
+}
+
 if [ "$#" -lt 1 ]; then
-    echo "ERROR: unexpected number of arguments provided"
+    log ERROR "unexpected number of arguments provided"
     echo -e "USAGE:\n$0 <working directory> [BAM suffix]"
     exit
 fi
@@ -23,7 +48,7 @@ fi
 
 p_i_features_file=$3
 if [ ! -f "$p_i_features_file" ]; then
-	echo "ERROR: input features file '${p_i_features_file}' doesn't exist"
+	log ERROR "input features file '${p_i_features_file}' doesn't exist"
 	exit
 fi
 
@@ -55,17 +80,17 @@ t_neg_anti_features_file="$p_tmp_dir/negative_anti-features.bed"
 ##                    ##
 
 if [ ! -d $p_working_dir ]; then
-	echo "[ERROR] working directory '$p_working_dir' doesn't exist"
+	log ERROR "working directory '$p_working_dir' doesn't exist"
 	exit
 fi
 
 if [ ! -d $p_input_dir ]; then
-	echo "[ERROR] input directory '$p_input_dir' doesn't exist"
+	log ERROR "input directory '$p_input_dir' doesn't exist"
 	exit
 fi
 
 if [ -f $p_o_coverage_file ]; then
-	echo "[WARNING] output file '$p_o_coverage_file' already exists. Returning existing file."
+	log WARNING "output file '$p_o_coverage_file' already exists. Returning existing file."
 	exit 0
 fi
 
@@ -84,26 +109,26 @@ done
 # BEGIN ANALYSIS #
 ##              ##
 
-echo "[INFO] converting arabic to roman chromosome names"
+log INFO "converting arabic to roman chromosome names"
 python scripts/arabic_to_roman.py $p_i_features_file $t_features_file
 
 
-echo "[INFO] creating strand-wise feature files"
+log INFO "creating strand-wise feature files"
 cat $t_features_file |
 	grep '\+$' > $t_pos_features_file
 cat $t_features_file |
 	grep '\-$' > $t_neg_features_file
 
-echo "[INFO] creating anti-features file '$t_anti_features_file'"
+log INFO "creating anti-features file '$t_anti_features_file'"
 scripts/create_anti_features.sh $t_features_file $p_i_chr_lengths_file $t_anti_features_file
 
-echo "[INFO] creating strand-wise anti-feature files"
+log INFO "creating strand-wise anti-feature files"
 cat $t_anti_features_file |
 	grep '\+$' >> $t_pos_features_file
 cat $t_anti_features_file |
 	grep '\-$' >> $t_neg_features_file
 
-echo "[INFO] sorting strand-wise feature files"
+log INFO "sorting strand-wise feature files"
 tmp_file_path="$p_tmp_dir/tmp"
 for ff in $t_pos_features_file $t_neg_features_file
 do
@@ -112,13 +137,13 @@ do
 		-i $tmp_file_path \
 		-g $p_i_chr_lengths_file >$ff
 	if [ $? -ne 0 ]; then
-		echo "[ERROR] Command failed while processing file '$tmp_file_path'"
+		log ERROR "Command failed while processing file '$tmp_file_path'"
 		exit 1
 	fi
 done
 rm $tmp_file_path
 
-echo "[INFO] creating the combined BED file of features and anti-features"
+log INFO "creating the combined BED file of features and anti-features"
 cat $t_pos_features_file $t_neg_features_file | \
 	bedtools sort -g $p_i_chr_lengths_file > $p_o_features_file
 
@@ -135,11 +160,11 @@ do
 	bed_path="${p_o_bed_dir}/${uniqueId}_${p_bam_suffix}_feature_coverage.bed"
 
 	if [ ! -f $old_bam ]; then
-		echo "[ERROR] Unable to find input BAM file '$old_bam'"
+		log ERROR "Unable to find input BAM file '$old_bam'"
 		exit
 	fi
 
-	echo "[INFO] Renaming $uniqueId BAM: '$old_bam'"
+	log INFO "Renaming $uniqueId BAM: '$old_bam'"
 	cp $old_bam $new_bam_path
 
 	if [ -f $bed_path ]; then
@@ -147,7 +172,7 @@ do
 	fi
 	touch $bed_path
 
-	echo "[INFO] calculating feature coverage for sample: $uniqueId"
+	log INFO "calculating feature coverage for sample: $uniqueId"
 	# positive-features
 	bedtools bamtobed -i $new_bam_path | \
 		grep '\+$'  | \
@@ -169,18 +194,18 @@ do
 		>> $bed_path
 
 	# Write to the output file path
-	echo "[INFO] sorting and concatenating BED file '$bed_path'"
+	log INFO "sorting and concatenating BED file '$bed_path'"
 	bedtools sort -g $p_i_chr_lengths_file -i $bed_path | \
 		awk -v id="$uniqueId" '{ OFS="\t"; print id,$0 }' >> \
 		$p_o_coverage_file
 done<$p_i_sample_name_map
 
 if [ ! -s "$p_o_coverage_file" ]; then
-	echo "[ERROR] Output file '$p_o_coverage_file' is empty or does not exist."
+	log ERROR "Output file '$p_o_coverage_file' is empty or does not exist."
 	exit 1
 fi
 
 # TODO: summarise number of reads in BAMs and BEDs
 
-echo "[INFO] Genome coverage information written to '$p_o_coverage_file'"
-echo "[INFO] Workflow completed"
+log INFO "Genome coverage information written to '$p_o_coverage_file'"
+log INFO "Workflow completed"

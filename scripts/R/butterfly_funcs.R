@@ -1,7 +1,7 @@
 
 load_trna_region_data_frame <- function(file_path) {
   col_name_lookup = c(
-    "trna.name"="name"
+    "trna.name" = "name"
   )
   readr::read_table(file = file_path,
                     col_names = TRUE, 
