@@ -46,14 +46,7 @@ SKIPPED_FEATURE_TYPES = [
 # The following feature types are replicated on both
 # strands to ensure that they are covered by anti-features
 # regardless of the strand of the original feature
-STRAND_REPLICATED_FEATURE_TYPES = [
-    "telomere",
-    "subtelomere",
-    "pericentromere",
-    "centromere",
-    "mobile_genetic_element",
-    "long_terminal_repeat"
-]
+STRAND_REPLICATED_FEATURE_TYPES = list(FEATURE_TYPE_NAME_MAP.keys())
 
 VALID_FEATURE_TYPES = set(FEATURE_TYPE_NAME_MAP)
 VALID_FEATURE_TYPES.update(set(SKIPPED_FEATURE_TYPES))
