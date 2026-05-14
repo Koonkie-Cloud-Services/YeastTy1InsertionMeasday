@@ -112,15 +112,36 @@ done
 log INFO "converting arabic to roman chromosome names"
 python scripts/arabic_to_roman.py $p_i_features_file $t_features_file
 
+log INFO "creating anti-features file '$t_anti_features_file'"
+scripts/create_anti_features.sh $t_features_file $p_i_chr_lengths_file $t_anti_features_file
 
 log INFO "creating and sorting strand-wise feature files"
 cat $t_features_file |
-	grep '\+$' | \
-	bedtools sort -i - -g $p_i_chr_lengths_file > $t_pos_features_file
+	grep '\+$' > $t_pos_features_file
 
 cat $t_features_file |
-	grep '\-$' | \
-	bedtools sort -i - -g $p_i_chr_lengths_file > $t_neg_features_file
+	grep '\-$' > $t_neg_features_file
+
+log INFO "creating strand-wise anti-feature files"
+cat $t_anti_features_file |
+	grep '\+$' >> $t_pos_features_file
+cat $t_anti_features_file |
+	grep '\-$' >> $t_neg_features_file
+
+log INFO "sorting strand-wise feature files"
+tmp_file_path="$p_tmp_dir/tmp"
+for ff in $t_pos_features_file $t_neg_features_file
+do
+	mv $ff $tmp_file_path
+	bedtools sort \
+		-i $tmp_file_path \
+		-g $p_i_chr_lengths_file >$ff
+	if [ $? -ne 0 ]; then
+		log ERROR "Command failed while processing file '$tmp_file_path'"
+		exit 1
+	fi
+done
+rm $tmp_file_path
 
 log INFO "creating the combined BED file of features"
 cat $t_pos_features_file $t_neg_features_file | \

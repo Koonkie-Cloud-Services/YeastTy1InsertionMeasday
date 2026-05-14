@@ -18,6 +18,8 @@ Usage:
     python calculate_fractional_coverage.py > output.bed
 """
 
+from dataclasses import fields
+from dataclasses import fields
 import sys
 from collections import defaultdict
 from typing import Dict, List, Tuple
@@ -36,6 +38,11 @@ def parse_intersect_line(line: str) -> Tuple[str, str, str, str, str, str, str]:
         raise ValueError(f"Expected at least 11 columns, got {len(fields)}: {line}")
     
     # Read info (columns 0-5)
+    read_start = fields[1]
+    if not read_start.isdigit():
+        raise ValueError(f"Invalid read start position: {read_start}")
+
+    read_end = fields[2]
     read_id = fields[3]
     read_strand = fields[5]
     
@@ -45,8 +52,8 @@ def parse_intersect_line(line: str) -> Tuple[str, str, str, str, str, str, str]:
     feature_end = fields[8]
     feature_id = fields[9]
     feature_strand = fields[10]
-    
-    return (read_id, read_strand, feature_chrom, feature_start, feature_end, feature_id, feature_strand)
+
+    return (read_id, read_strand, read_start, read_end, feature_chrom, feature_start, feature_end, feature_id, feature_strand)
 
 
 def calculate_fractional_coverage(intersect_stream) -> Dict[Tuple[str, str, str, str, str], float]:
@@ -63,14 +70,23 @@ def calculate_fractional_coverage(intersect_stream) -> Dict[Tuple[str, str, str,
     """
     # First pass: Group intersections by read_id (only if strands match)
     read_to_features: Dict[str, List[Tuple[str, str, str, str, str]]] = defaultdict(list)
+    reads_with_no_features = set()
     
     for line in intersect_stream:
         if not line.strip():
             continue
             
         try:
-            read_id, read_strand, f_chrom, f_start, f_end, f_id, f_strand = parse_intersect_line(line)
-            
+            read_id, read_strand, read_start, read_end, f_chrom, f_start, f_end, f_id, f_strand = parse_intersect_line(line)
+            if read_id not in read_to_features:
+                read_to_features[read_id] = []  # Mark read as having no features
+
+            anchor = int(read_end) - 1 if read_strand == '-' else int(read_start)
+
+            # Skip if the read's 5' position is past the feature end
+            if anchor > int(f_end):
+                continue
+
             # Only count read-feature pairs where strands match
             if read_strand != f_strand:
                 continue
@@ -83,8 +99,13 @@ def calculate_fractional_coverage(intersect_stream) -> Dict[Tuple[str, str, str,
     
     # Second pass: Calculate fractional counts
     feature_counts: Dict[Tuple[str, str, str, str, str], float] = defaultdict(float)
+    reads_with_no_features = sum(1 for features in read_to_features.values() if not features)
+    print(f"Reads with no overlapping features: {reads_with_no_features}", file=sys.stderr)
     
     for read_id, features in read_to_features.items():
+        if not features:
+            print(f"Warning: Read '{read_id}' has no overlapping features", file=sys.stderr)
+            continue  # Skip reads with no overlapping features
         # Equal split: each feature gets 1/N
         num_features = len(features)
         fractional_count = 1.0 / num_features

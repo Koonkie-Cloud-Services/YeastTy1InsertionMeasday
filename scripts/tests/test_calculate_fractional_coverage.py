@@ -225,6 +225,40 @@ class TestOutputFormatting(unittest.TestCase):
         self.assertTrue(lines[2].startswith('chrII\t200\t300\tgene3\t-\t2.0000'))
 
 
+class TestBedtoolsIntersectInput(unittest.TestCase):
+    """Test using real bedtools intersect output."""
+
+    def setUp(self):
+        import os
+        parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if parent_dir not in sys.path:
+            sys.path.insert(0, parent_dir)
+        import calculate_fractional_coverage
+        self.module = calculate_fractional_coverage
+        self.data_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "data", "bedtools_intersect.bed"
+        )
+
+    def test_reads_matched_to_expected_features(self):
+        """Test that reads are matched to their expected features on + strand."""
+        with open(self.data_file) as f:
+            feature_counts = self.module.calculate_fractional_coverage(f)
+
+        ty4_ltr_positive = ('chrII', '643488', '643858', 'Ty4(LTR)', '+')
+        self.assertIn(ty4_ltr_positive, feature_counts)
+        self.assertGreater(feature_counts[ty4_ltr_positive], 0)
+
+        telomere_positive = ('chrIII', '1', '1098', 'telomere', '+')
+        self.assertIn(telomere_positive, feature_counts)
+        self.assertGreater(feature_counts[telomere_positive], 0)
+
+        # Read HS26_345:2:1202:12688:96143 (- strand, anchor=405207)
+        # should match Ty1(LTR) [405146, 405207) on - strand
+        ty1_ltr_negative = ('chrVII', '405146', '405207', 'Ty1(LTR)', '-')
+        self.assertIn(ty1_ltr_negative, feature_counts)
+        self.assertGreater(feature_counts[ty1_ltr_negative], 0)
+
+
 def run_tests():
     """Run all tests."""
     loader = unittest.TestLoader()
@@ -232,6 +266,7 @@ def run_tests():
     
     suite.addTests(loader.loadTestsFromTestCase(TestFractionalCoverage))
     suite.addTests(loader.loadTestsFromTestCase(TestOutputFormatting))
+    suite.addTests(loader.loadTestsFromTestCase(TestBedtoolsIntersectInput))
     
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
