@@ -234,5 +234,59 @@ NC_001133.9\t300\t400\tcustom_feature2\t-
         )
         return
 
+    def test_gene_neighbourhood_features(self):
+        """Test that buffer specs keyed by featuretype create neighbourhoods for all genes"""
+        from reformat_genome_features_to_bed import parse_gff_to_bed, get_buffer_specification_index, BUFFER_SPEC
+
+        gene_buffer_spec = BUFFER_SPEC(
+            feature_name="gene",
+            prefix=["upstream", "downstream"],
+            sep="_",
+            length=600,
+        )
+        buffer_spec_index = get_buffer_specification_index(buffer_spec=[gene_buffer_spec])
+
+        parse_gff_to_bed(
+            self.gff_db,
+            self.bed_file,
+            buffer_spec_index=buffer_spec_index,
+            feature_types_to_skip=["centromere", "region"],
+        )
+
+        with open(self.bed_file, "r") as f:
+            lines = f.readlines()
+
+        # Find upstream/downstream gene features
+        upstream_lines = [l for l in lines if "_upstream" in l]
+        downstream_lines = [l for l in lines if "_downstream" in l]
+
+        # Should have neighbourhood features for both genes (gene1 on + strand, gene2 on - strand is tRNA so no)
+        self.assertEqual(len(upstream_lines), 1)
+        self.assertEqual(len(downstream_lines), 1)
+
+        # Check + strand gene (gene1: start=1000, end=2000, strand=+)
+        # upstream: max(1000-600, 1)=400 to 1000
+        # downstream: 2000 to min(2000+600, 230218)=2600
+        for line in upstream_lines:
+            fields = line.strip().split("\t")
+            if "gene1(gene)" in fields[3]:
+                self.assertEqual(fields[0], "chrI")
+                self.assertEqual(fields[1], "400")
+                self.assertEqual(fields[2], "1000")
+                self.assertEqual(fields[3], "gene1(gene)_upstream")
+                self.assertEqual(fields[4], "+")
+
+        for line in downstream_lines:
+            fields = line.strip().split("\t")
+            if "gene1(gene)" in fields[3]:
+                self.assertEqual(fields[0], "chrI")
+                self.assertEqual(fields[1], "2000")
+                self.assertEqual(fields[2], "2600")
+                self.assertEqual(fields[3], "gene1(gene)_downstream")
+                self.assertEqual(fields[4], "+")
+
+        return
+
+
 if __name__ == "__main__":
     unittest.main()

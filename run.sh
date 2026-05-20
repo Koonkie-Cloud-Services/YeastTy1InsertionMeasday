@@ -88,6 +88,12 @@ ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 	$p_o_coverage_dir "dupremoved.sorted" "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed"
 ./scripts/calculate_feature_coverage.sh \
 	$p_o_coverage_dir "dupremoved_uniq.sorted" "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed"
+python scripts/find_genes_near_transposons.py \
+	--bed "data/output/genome_coverage/output/feature_locations/Saccharomyces_cerevisiae_S288C_features.bed" \
+	--features "gene" \
+	--distance 1000 \
+	--output "$p_o_coverage_dir/genes_near_ty1.tsv
+
 # Calculate coverage of features used in polymerase analysis
 ./scripts/calculate_feature_coverage.sh \
 	$p_o_coverage_dir "dupremoved.sorted" "${p_o_features_dir}/polymerase_analysis.RNA_Pol_3.bed"

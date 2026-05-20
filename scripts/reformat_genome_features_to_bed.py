@@ -48,6 +48,13 @@ SKIPPED_FEATURE_TYPES = [
 # regardless of the strand of the original feature
 STRAND_REPLICATED_FEATURE_TYPES = list(FEATURE_TYPE_NAME_MAP.keys())
 
+# RNA feature types that take precedence over their parent gene entries
+RNA_FEATURE_TYPES = {
+    'tRNA', 'snoRNA', 'snRNA', 'rRNA', 'ncRNA',
+    'antisense_RNA', 'telomerase_RNA', 'SRP_RNA',
+    'RNase_P_RNA', 'RNase_MRP_RNA'
+}
+
 VALID_FEATURE_TYPES = set(FEATURE_TYPE_NAME_MAP)
 VALID_FEATURE_TYPES.update(set(SKIPPED_FEATURE_TYPES))
 TMP_GFF_PATH = "tmp.gff"
@@ -170,6 +177,14 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
 
     buffer_spec_index = kwargs.get("buffer_spec_index", {})
 
+    # Identify genes that are parents of RNA features to avoid writing
+    # duplicate entries (RNA annotations take precedence over gene entries)
+    genes_with_rna_children = set()
+    for rna_type in RNA_FEATURE_TYPES:
+        for rna_feat in gff_db.all_features(featuretype=rna_type):
+            for parent in gff_db.parents(rna_feat, featuretype='gene'):
+                genes_with_rna_children.add(parent.id)
+
     chrom = ""
     acc = 0
     chrom_id_map = {}
@@ -198,10 +213,15 @@ def parse_gff_to_bed(gff_db: gffutils.FeatureDB, bed_file: str, **kwargs) -> Non
             if chrom == "":
                 raise AssertionError(f"No chromosome found for feature '{ft_inst.seqid}'.")
 
+            # Skip gene features whose coordinates duplicate an RNA annotation
+            if ft_inst.featuretype == 'gene' and ft_inst.id in genes_with_rna_children:
+                continue
+
             ft_inst.id = get_feature_name(ft_inst, **kwargs)
             ft_inst.chrom = chrom_prefix + chrom
             try:
-                for spec in buffer_spec_index[ft_inst.id]:
+                specs = buffer_spec_index.get(ft_inst.id) or buffer_spec_index.get(ft_inst.featuretype, [])
+                for spec in specs:
                     for bf in create_buffered_features(ft_inst,
                                                        buffer_spec=spec,
                                                        chrom_lengths=chrom_lengths):
@@ -403,10 +423,10 @@ def create_buffered_features(ft_inst: gffutils.Feature,
         ds_start = ft_inst.stop # + 1
         ds_stop = min(ft_inst.stop + buffer_length, chrom_lengths[ft_inst.chrom])
     elif ft_inst.strand == "-":
-        us_start = min(ft_inst.stop, chrom_lengths[ft_inst.chrom])
-        us_stop = ft_inst.stop + buffer_length # + 1
-        ds_start = ft_inst.start - buffer_length # - 1
-        ds_stop = max(ft_inst.start, 1)
+        us_start = ft_inst.stop
+        us_stop = min(ft_inst.stop + buffer_length, chrom_lengths[ft_inst.chrom])
+        ds_start = max(ft_inst.start - buffer_length, 1)
+        ds_stop = ft_inst.start
     else:
         raise ValueError(f"Feature {ft_inst.id} has an invalid strand: {ft_inst.strand}")
 

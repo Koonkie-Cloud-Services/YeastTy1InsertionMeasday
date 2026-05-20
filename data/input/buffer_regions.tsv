@@ -5,3 +5,4 @@ tRNA	upstream,downstream	_	1000
 origin_of_replication	upstream,downstream	 	500
 RPL	upstream,downstream	 	1000
 RPS	upstream,downstream	 	1000
+gene	upstream,downstream	_	600
