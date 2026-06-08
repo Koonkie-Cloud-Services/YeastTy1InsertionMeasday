@@ -80,6 +80,11 @@ run_command python scripts/subset_features_for_polymerase_analysis.py \
 	--sheet_name "polymerase_analysis" \
 	--drop_unmatched \
 	--nucleosome_data "${input_dir}/13059_2018_1398_MOESM2_ESM.xlsx"
+run_command python scripts/find_genes_near_transposons.py \
+	--bed "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed" \
+	--features "gene" \
+	--distance 2000 \
+	--output "$p_o_features_dir/genes_near_ty1.tsv"
 
 # Calculate genome coverage for all features
 ln -s $PWD/$input_dir $p_o_coverage_dir
@@ -88,11 +93,6 @@ ln -s $PWD/$p_o_features_dir $p_o_coverage_dir/$( basename $input_dir)
 	$p_o_coverage_dir "dupremoved.sorted" "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed"
 ./scripts/calculate_feature_coverage.sh \
 	$p_o_coverage_dir "dupremoved_uniq.sorted" "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed"
-python scripts/find_genes_near_transposons.py \
-	--bed "data/output/genome_coverage/output/feature_locations/Saccharomyces_cerevisiae_S288C_features.bed" \
-	--features "gene" \
-	--distance 1000 \
-	--output "$p_o_coverage_dir/genes_near_ty1.tsv
 
 # Calculate coverage of features used in polymerase analysis
 ./scripts/calculate_feature_coverage.sh \

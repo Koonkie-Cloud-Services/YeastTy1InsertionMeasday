@@ -951,6 +951,7 @@ gff_df <- readr::read_delim(
   show_col_types = FALSE,
 ) |> 
   dplyr::mutate(
+    featureName = stringr::str_replace_all(featureName, "_", " "),
     featureType = case_when(
       featureName %in% c("tRNA", "tRNA upstream", "tRNA downstream") ~ featureName,
       grepl(x = featureName, pattern = "gene") ~ "gene",
@@ -967,7 +968,8 @@ gff_df <- readr::read_delim(
 genome_feature_size_df <- gff_df |> 
   group_by(featureType) |> 
   summarise(
-    totalLength = sum(length)
+    totalLength = sum(length),
+    count = n()
   ) |>
   ungroup() |>
   mutate(
@@ -1006,6 +1008,21 @@ hm.full_cov_df <- load_genome_coverage_data_frame(
 hm.cov_df <- hm.full_cov_df %>% 
   filter(! library %in% p.libs_for_filtering) %>% 
   summarise_coverage_by_feature(library, feature.name)
+```
+
+```{r write-anti-feature-coverage-table, eval=FALSE}
+hm.full_cov_df |>
+  filter(feature.name == "anti-feature") |>
+  group_by(chr, start, end, strand, feature.length) |>
+  summarise(
+    mapped_reads_avg = mean(coverage),
+    norm_coverage_avg = mean(coverage.pbp.norm)
+  ) |>
+  arrange(desc(mapped_reads_avg)) |>
+  readr::write_delim(
+    file = file.path(params$output_dir, "anti_feature_coverages.tsv"),
+    delim = "\t"
+  )
 ```
 
 The coverage values of the upstream and downstream of the following features were aggregated.
@@ -1093,9 +1110,22 @@ writexl::write_xlsx(
 
 The following table shows the percentage of Ty1 insertions within each feature type: tRNA genes (upstream and downstream), RNA Pol II genes, rDNA, Ty1 retrotransposons, LTRs, RNA Pol III genes (excluding tRNA genes), anti-features, and "Other" representing everything else.
 
+```{r load-genes-near-ty1}
+genes_near_ty_elements <- readr::read_delim(
+  file = here(params$data_dir, "output", "feature_locations", "genes_near_ty1.tsv"),
+  delim = "\t"
+) |>
+  dplyr::mutate(feature = stringr::str_remove(string = feature, pattern = fixed("(gene)"))) |> 
+  pull(feature)
+```
+
 ```{r}
-genome_feature_read_perc_df <- hm.cov_df |>
-  dplyr::filter(feature.name != "gene") |>
+genome_feature_read_perc_df <- hm.full_cov_df |>  
+  filter(
+    !library %in% p.libs_for_filtering,
+    !gene.name %in% genes_near_ty_elements
+  ) |> 
+  summarise_coverage_by_feature(library, feature.name) |>
   dplyr::mutate(
     category = case_when(
       feature.name %in% c("tRNA", "tRNA upstream", "tRNA downstream") ~ feature.name,
@@ -1104,27 +1134,15 @@ genome_feature_read_perc_df <- hm.cov_df |>
       feature.name == "anti-feature" ~ "anti-feature",
       feature.name == "Ty1(retrotransposon)" ~ "Ty1 retrotransposon",
       grepl(pattern = "retrotransposon", x = feature.name) ~ "Other retrotransposons",
+      feature.name == "gene" ~ "RNA Pol II gene",
+      feature.name == "gene upstream" ~ "upstream RNA Pol II gene",
+      feature.name == "gene downstream" ~ "downstream RNA Pol II gene",
       .default = "Other feature"
     )) |>
   dplyr::group_by(library, category) |> 
-  dplyr::summarise(read_count = sum(read_count)) |> 
-  dplyr::select(all_of(c("library", "category", "read_count"))) |> 
-  # Add the alignments to RNA Pol II genes
-  dplyr::bind_rows(
-    rpii_rel_pos_df |> 
-      .fix_library_names() |> 
-      dplyr::mutate(
-        category = case_when(
-          rel_position < 0 ~ "RNA Pol II gene upstream",
-          rel_position > 100 ~ "RNA Pol II gene downstream",
-          .default = "RNA Pol II gene"
-        )
-      ) |> 
-      group_by(library, category) |> 
-      summarise(
-        read_count = sum(coverage.raw)
-      )
-  ) |>
+  dplyr::summarise(read_count = sum(read_count),
+                   .groups = "drop_last") |> 
+  dplyr::select(all_of(c("library", "category", "read_count"))) |>
   dplyr::left_join(
     read_counts_df |>
       .fix_library_names() |> 
@@ -1135,13 +1153,14 @@ genome_feature_read_perc_df <- hm.cov_df |>
     by = "library") |> 
   dplyr::mutate(
     readPerc = round(100 * read_count / mapped_dedup_reads, 2)
-  )
+  ) |> 
+  arrange(library, desc(readPerc))
 writexl::write_xlsx(
   list(
     "Feature coverage" = genome_feature_read_perc_df,
     "Feature sizes" = genome_feature_size_df
   ),
-  path = here("genome_feature_read_perc.dedup.v1.xlsx")
+  path = here("genome_feature_read_perc.dedup.xlsx")
 )
 ```
 
@@ -1244,12 +1263,13 @@ for (panel in unique(hm.meta_df$subunit)) {
   cov_mat <- rpiii.cov_df %>%
       dplyr::filter(
         subunit == panel,
-        !grepl(pattern="5S rRNA", x = feature),
-        !grepl(pattern="tRNA", x = feature)
+        !grepl(pattern = "5S rRNA", x = feature),
+        !grepl(pattern = "tRNA", x = feature)
       ) %>%
       dplyr::select(tidyselect::all_of(c("feature", "coverage", "library"))) %>% 
       tidyr::pivot_wider(names_from = "feature",
-                         values_from = "coverage") %>% 
+                         values_from = "coverage",
+                         values_fill = 0) %>% 
       tibble::column_to_rownames("library") %>%
       t()
 
@@ -1283,7 +1303,8 @@ for (panel in unique(hm.meta_df$subunit)) {
       ) %>%
       dplyr::select(tidyselect::all_of(c("feature", "coverage", "library"))) %>% 
       tidyr::pivot_wider(names_from = "feature",
-                         values_from = "coverage") %>% 
+                         values_from = "coverage",
+                         values_fill = 0) %>% 
       tibble::column_to_rownames("library") %>%
       t()
 
@@ -1476,7 +1497,7 @@ trna_cov_df.mut_vs_wt |>
     legend.background = element_rect(fill = NA, colour = NA)
   )
 
-outlier_trna_type_list <- c("tE", "tW", "tC", "tN")
+outlier_trna_type_list <- c("tE", "tW", "tH", "tC", "tN")
 ```
 
 ```{r trna-coverage-t-test-gene, tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. The tRNAs", paste(outlier_trna_type_list, collapse=', '), "were tested as they were observed to be outliers from the scatterplot figure.")}

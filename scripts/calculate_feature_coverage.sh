@@ -57,6 +57,7 @@ p_i_bam_dir="$p_input_dir/alignments"
 p_i_features_dir="$p_input_dir/feature_locations"
 p_i_sample_name_map="$p_input_dir/hiseq_sample_id_map.tsv"
 p_i_chr_lengths_file="$p_input_dir/chromosome_lengths.tsv"
+p_i_exclude_features_file="$p_i_features_dir/genes_near_ty1.tsv"
 p_features_prefix=$( basename $p_i_features_file | sed 's/.bed$//g' )
 
 # Output paths
@@ -92,6 +93,11 @@ fi
 if [ -f $p_o_coverage_file ]; then
 	log WARNING "output file '$p_o_coverage_file' already exists. Returning existing file."
 	exit 0
+fi
+
+if [ ! -f $p_i_exclude_features_file ]; then
+	log ERROR "exclude features file '$p_i_exclude_features_file' doesn't exist."
+	exit 1
 fi
 
 if [ -d $p_tmp_dir ]; then
@@ -174,6 +180,7 @@ do
 
 	log INFO "calculating fractional feature coverage for sample: $uniqueId"
 	# positive-strand reads and features
+	set -o pipefail
 	bedtools bamtobed -i $new_bam_path | \
 		grep '\+$' | \
 		bedtools sort -i - -g $p_i_chr_lengths_file | \
@@ -183,8 +190,14 @@ do
 		-b $t_pos_features_file \
 		-sorted \
 		-g $p_i_chr_lengths_file | \
-		python scripts/calculate_fractional_coverage.py \
+		python scripts/calculate_fractional_coverage.py --exclude $p_i_exclude_features_file \
 		>> $bed_path
+
+	if [ $? -ne 0 ]; then
+		log ERROR "Failed to calculate positive-strand coverage for sample '$uniqueId'"
+		exit 1
+	fi
+	set +o pipefail
 
 	# negative-strand reads and features
 	bedtools bamtobed -i $new_bam_path | \
@@ -196,8 +209,14 @@ do
 		-b $t_neg_features_file \
 		-sorted \
 		-g $p_i_chr_lengths_file | \
-		python scripts/calculate_fractional_coverage.py \
+		python scripts/calculate_fractional_coverage.py --exclude $p_i_exclude_features_file \
 		>> $bed_path
+
+	if [ $? -ne 0 ]; then
+		log ERROR "Failed to calculate negative-strand coverage for sample '$uniqueId'"
+		exit 1
+	fi
+	set +o pipefail
 
 	# Write to the output file path
 	log INFO "sorting and concatenating BED file '$bed_path'"

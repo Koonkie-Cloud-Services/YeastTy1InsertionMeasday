@@ -16,13 +16,16 @@ Output: Feature-level coverage (TSV format)
 Usage:
   bedtools intersect -wa -wb -a reads.bed -b features.bed | \
     python calculate_fractional_coverage.py > output.bed
+
+  # Exclude features near Ty1 elements:
+  bedtools intersect -wa -wb -a reads.bed -b features.bed | \
+    python calculate_fractional_coverage.py --exclude genes_near_ty1.tsv > output.bed
 """
 
-from dataclasses import fields
-from dataclasses import fields
+import argparse
 import sys
 from collections import defaultdict
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 
 def parse_intersect_line(line: str) -> Tuple[str, str, str, str, str, str, str]:
@@ -56,18 +59,44 @@ def parse_intersect_line(line: str) -> Tuple[str, str, str, str, str, str, str]:
     return (read_id, read_strand, read_start, read_end, feature_chrom, feature_start, feature_end, feature_id, feature_strand)
 
 
-def calculate_fractional_coverage(intersect_stream) -> Dict[Tuple[str, str, str, str, str], float]:
+def load_excluded_features(exclude_file: str) -> Set[str]:
+    """
+    Load feature names to exclude from a TSV file.
+
+    Expects the output format of find_genes_near_transposons.py:
+    #chrom  start  end  feature  strand  nearest_ty1  distance
+
+    Returns:
+        Set of feature name strings to exclude.
+    """
+    excluded = set()
+    with open(exclude_file) as fh:
+        for line in fh:
+            if line.startswith("#") or not line.strip():
+                continue
+            fields = line.strip().split("\t")
+            excluded.add(fields[3])
+    return excluded
+
+
+def calculate_fractional_coverage(intersect_stream,
+                                  excluded_features: Set[str] = None) -> Dict[Tuple[str, str, str, str, str], float]:
     """
     Calculate fractional coverage from read-feature intersections.
     
     For each read, assign equal fractional counts (1/N) to all N overlapping features.
+    Features in excluded_features are ignored so that reads are properly
+    redistributed among the remaining overlapping features.
     
     Args:
         intersect_stream: Input stream of bedtools intersect output
+        excluded_features: Optional set of feature names to exclude from calculations
         
     Returns:
         Dictionary mapping (chrom, start, end, feature_id, strand) -> fractional_count
     """
+    if excluded_features is None:
+        excluded_features = set()
     # First pass: Group intersections by read_id (only if strands match)
     read_to_features: Dict[str, List[Tuple[str, str, str, str, str]]] = defaultdict(list)
     reads_with_no_features = set()
@@ -89,6 +118,10 @@ def calculate_fractional_coverage(intersect_stream) -> Dict[Tuple[str, str, str,
 
             # Only count read-feature pairs where strands match
             if read_strand != f_strand:
+                continue
+
+            # Skip excluded features
+            if f_id in excluded_features:
                 continue
             
             feature_key = (f_chrom, f_start, f_end, f_id, f_strand)
@@ -134,12 +167,24 @@ def write_output(feature_counts: Dict[Tuple[str, str, str, str, str], float]):
 
 def main():
     """Main entry point."""
-    if len(sys.argv) > 1 and sys.argv[1] in ['-h', '--help']:
-        print(__doc__)
-        sys.exit(0)
-    
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument(
+        "--exclude",
+        dest="exclude_file",
+        type=str,
+        required=False,
+        help="TSV file of features to exclude (output of find_genes_near_transposons.py)"
+    )
+    args = parser.parse_args()
+
+    excluded_features = set()
+    if args.exclude_file:
+        excluded_features = load_excluded_features(args.exclude_file)
+        print(f"Excluding {len(excluded_features)} features from calculations", file=sys.stderr)
+
     # Read from stdin
-    feature_counts = calculate_fractional_coverage(sys.stdin)
+    feature_counts = calculate_fractional_coverage(sys.stdin, excluded_features)
     
     # Write to stdout
     write_output(feature_counts)
