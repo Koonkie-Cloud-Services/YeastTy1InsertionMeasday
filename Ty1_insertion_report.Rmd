@@ -1060,9 +1060,11 @@ for (panel in unique(hm.meta_df$subunit)) {
       extract_metadata_from_library_names() %>% 
       dplyr::filter(
         subunit == panel,
-        ! feature.name %in% nonunique_coverage_heatmap_blackout_features
+        !feature.name %in% nonunique_coverage_heatmap_blackout_features
       ) %>% 
-      dplyr::select(tidyselect::all_of(c("library", "feature.name", "vals"="mean_cov.norm"))) %>% 
+      dplyr::select(tidyselect::all_of(c(
+        "library", "feature.name", "vals" = "mean_cov.norm"
+      ))) %>% 
       tidyr::pivot_wider(names_from = "feature.name",
                          values_from = "vals",
                          values_fill = 0) %>% 
@@ -1077,6 +1079,39 @@ for (panel in unique(hm.meta_df$subunit)) {
     brewer_palette_name = c("Set1", "Set3")
   ))
 }
+```
+
+```{r test-ty1-retrotransposon-coverage-across-rpc160, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC160 mutants and wild-type."}
+ty1_rpc160_df <- hm.full_cov_df |>
+  dplyr::filter(
+    !library %in% p.libs_for_filtering,
+    feature.name == "Ty1(retrotransposon)"
+  ) |>
+  select(all_of(c("library", "feature.name", "coverage.pbp.norm"))) |>
+  extract_metadata_from_library_names() |>
+  dplyr::filter(
+    subunit == "RPC160",
+    sugar == "Galactose"
+  )
+
+ty1_rpc160_t_test <- ty1_rpc160_df |>
+  subunit_wise_t_test_helper(
+    paired = FALSE,
+    conf.level = 0.99,
+    alternative = "two.sided",
+    values_col = "coverage.pbp.norm"
+  ) |>
+  dplyr::select(all_of(c("group", "statistic", "p.value", "wt.mean", "mut.mean"))) |>
+  dplyr::mutate(
+    statistic = round(statistic, 2),
+    p.value = round(p.value, 4)
+  )
+
+ty1_rpc160_t_test |>
+  knitr::kable(
+    col.names = c("Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+  ) |>
+  kableExtra::kable_minimal()
 ```
 
 ```{r write-feature-coverage-to-xlsx}
@@ -2078,7 +2113,7 @@ hm.uniq_cov_df <- load_genome_coverage_data_frame(
   library_size_df = read_counts_df
 ) %>%
   dplyr::filter(
-    ! library %in% p.libs_for_filtering
+    !library %in% p.libs_for_filtering
   ) %>% 
   summarise_coverage_by_feature(library, feature.name)
 
@@ -2107,6 +2142,49 @@ for (panel in unique(hm.meta_df$subunit)) {
     brewer_palette_name = c("Set1", "Set3")
   ))
 }
+```
+
+```{r test-ty1-ltr-across-rpc160, tab.cap="Two-sided t-test results comparing coverage values of LTR elements between RPC160 mutants and wild-type."}
+ltr_rpc160_df <- load_genome_coverage_data_frame(
+  file_path = p.hm.uniq_cov_file,
+  blackout_df = feature_filter_df,
+  neighbourhoods = feature_neighbourhood_list,
+  library_size_df = read_counts_df
+) |>
+  dplyr::filter(
+    !library %in% p.libs_for_filtering,
+    grepl(pattern = "LTR", x = feature.name)
+  ) |> 
+  select(all_of(c("library", "feature.name", "coverage.pbp.norm"))) |> 
+  extract_metadata_from_library_names() |> 
+  dplyr::filter(
+    subunit == "RPC160",
+    sugar == "Galactose"
+  )
+
+ltr_rpc160_t_test <- ltr_rpc160_df |>
+  dplyr::group_by(feature.name) |>
+  tidyr::nest() |>
+  dplyr::mutate(
+    ttest = purrr::map(data,
+                       subunit_wise_t_test_helper,
+                       paired = FALSE,
+                       conf.level = 0.99,
+                       alternative = "two.sided",
+                       values_col = "coverage.pbp.norm")
+  ) |>
+  tidyr::unnest(ttest) |>
+  dplyr::select(all_of(c("feature.name", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) |>
+  dplyr::mutate(
+    statistic = round(statistic, 2),
+    p.value = round(p.value, 4)
+  )
+
+ltr_rpc160_t_test |>
+  knitr::kable(
+    col.names = c("LTR Feature", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+  ) |>
+  kableExtra::kable_minimal()
 ```
 
 ### Bar-plots
