@@ -472,9 +472,11 @@ TODO: group p-values as less than 0.001
 ```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference between the tRNA coverages of mutant and wild-type strains."}
 
 bt.cov_t_test_res_table <- bt.cov_df %>%
-  filter(sugar == "Galactose",
-         subunit != "Other",
-         proximity == "upstream") %>%
+  filter(
+    sugar == "Galactose",
+    subunit != "Other",
+    proximity == "upstream"
+  ) %>%
   group_by(strain.type, trna.name, library, subunit, group) %>%
   summarise(coverage.sum = sum(coverage.norm),
             .groups = "keep") %>%
@@ -1535,7 +1537,7 @@ trna_cov_df.mut_vs_wt |>
 outlier_trna_type_list <- c("tE", "tW", "tH", "tC", "tN")
 ```
 
-```{r trna-coverage-t-test-gene, tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. The tRNAs", paste(outlier_trna_type_list, collapse=', '), "were tested as they were observed to be outliers from the scatterplot figure.")}
+```{r trna-coverage-t-test-gene, tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. All tRNAs", paste(outlier_trna_type_list, collapse=', '), "were tested (not just those observed to be outliers from the scatterplot figure). Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
 tmp_trna_cov_df <- trna_named_cov_df %>%
   filter(
     feature.name == 'tRNA',
@@ -1549,7 +1551,8 @@ tmp_trna_cov_df <- trna_named_cov_df %>%
   dplyr::group_by(subunit, strain.type, group, trna.name) %>%
   dplyr::mutate(trna_obs = n()) %>%
   dplyr::filter(
-    trna.name %in% outlier_trna_type_list,
+    # trna.name %in% outlier_trna_type_list,
+    !is.na(trna.name),
     trna_obs > 3
   ) %>%
   dplyr::select(all_of(c(
@@ -1583,6 +1586,14 @@ trna_t_test_res_df <- tmp_trna_cov_df %>%
   dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean"))) %>% 
   left_join(trna_cov_stats_df,
             by = c("subunit", "trna.type", "group"))
+
+sig_trna_types <- trna_t_test_res_df %>%
+  dplyr::filter(p.value < 0.05) %>%
+  dplyr::pull(trna.type) %>%
+  unique()
+
+trna_t_test_res_df <- trna_t_test_res_df %>%
+  dplyr::filter(trna.type %in% sig_trna_types)
 
 bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
 
@@ -1621,7 +1632,8 @@ tmp_trna_cov_df <- trna_named_cov_df %>%
   dplyr::group_by(subunit, strain.type, group, trna.name) %>%
   dplyr::mutate(trna_obs = n()) %>%
   dplyr::filter(
-    trna.name %in% outlier_trna_type_list,
+    #trna.name %in% outlier_trna_type_list,
+    !is.na(trna.name),
     trna_obs > 3
   ) %>%
   dplyr::select(all_of(c(
@@ -1656,6 +1668,14 @@ trna_t_test_res_df <- tmp_trna_cov_df %>%
   left_join(trna_cov_stats_df,
             by = c("subunit", "trna.type", "group"))
 
+sig_trna_types <- trna_t_test_res_df %>%
+  dplyr::filter(p.value < 0.05) %>%
+  dplyr::pull(trna.type) %>%
+  unique()
+
+trna_t_test_res_df <- trna_t_test_res_df %>%
+  dplyr::filter(trna.type %in% sig_trna_types)
+
 bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
 
 trna_t_test_res_df %>%
@@ -1676,6 +1696,31 @@ if (!render_pdf) {
   )
 }
 rm(tmp_trna_cov_df)
+```
+
+```{r plot-tW-trna-distribution, fig.cap="Distribution of normalised coverage values upstream of tW tRNA genes for each library, faceted by subunit group.", fig.height=6, fig.width=10}
+trna_named_cov_df |>
+  dplyr::filter(
+    trna.name == "tW",
+    proximity == "upstream",
+    !library %in% p.libs_for_filtering,
+    sugar == "Galactose",
+    subunit != "Other"
+  ) |>
+  dplyr::mutate(
+    subunit = factor(subunit, levels = c("RPC160", "RPC34", "RPC53")),
+    group = reorder(group, as.numeric(subunit))
+  ) |>
+  ggplot(aes(x = group, y = coverage.pbp.norm, fill = strain.type)) +
+  geom_boxplot() +
+  ggplot2::facet_grid(cols = vars(subunit), scales = "free_x", space = "free") +
+  ggplot2::labs(
+    x = "",
+    y = "Normalised coverage (reads/bp)"
+  ) +
+  ggplot2::guides(fill = guide_legend("Genotype")) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
