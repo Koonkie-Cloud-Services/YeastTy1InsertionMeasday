@@ -190,7 +190,7 @@ do
 		-b $t_pos_features_file \
 		-sorted \
 		-g $p_i_chr_lengths_file | \
-		python scripts/calculate_fractional_coverage.py --exclude $p_i_exclude_features_file \
+		python scripts/calculate_fractional_coverage.py --exclude $p_i_exclude_features_file --no-fractional \
 		>> $bed_path
 
 	if [ $? -ne 0 ]; then
@@ -209,7 +209,7 @@ do
 		-b $t_neg_features_file \
 		-sorted \
 		-g $p_i_chr_lengths_file | \
-		python scripts/calculate_fractional_coverage.py --exclude $p_i_exclude_features_file \
+		python scripts/calculate_fractional_coverage.py --exclude $p_i_exclude_features_file  --no-fractional \
 		>> $bed_path
 
 	if [ $? -ne 0 ]; then

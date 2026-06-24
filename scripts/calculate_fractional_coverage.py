@@ -80,7 +80,8 @@ def load_excluded_features(exclude_file: str) -> Set[str]:
 
 
 def calculate_fractional_coverage(intersect_stream,
-                                  excluded_features: Set[str] = None) -> Dict[Tuple[str, str, str, str, str], float]:
+                                  excluded_features: Set[str] = None,
+                                  whole_count: bool = False) -> Dict[Tuple[str, str, str, str, str], float]:
     """
     Calculate fractional coverage from read-feature intersections.
     
@@ -141,7 +142,7 @@ def calculate_fractional_coverage(intersect_stream,
             continue  # Skip reads with no overlapping features
         # Equal split: each feature gets 1/N
         num_features = len(features)
-        fractional_count = 1.0 / num_features
+        fractional_count = 1.0 if whole_count else 1.0 / num_features
         
         for feature_key in features:
             feature_counts[feature_key] += fractional_count
@@ -176,6 +177,13 @@ def main():
         required=False,
         help="TSV file of features to exclude (output of find_genes_near_transposons.py)"
     )
+    parser.add_argument(
+        "--no-fractional",
+        dest="whole_count",
+        action="store_true",
+        default=False,
+        help="Assign whole counts (1) per read instead of fractional (1/N)"
+    )
     args = parser.parse_args()
 
     excluded_features = set()
@@ -184,7 +192,7 @@ def main():
         print(f"Excluding {len(excluded_features)} features from calculations", file=sys.stderr)
 
     # Read from stdin
-    feature_counts = calculate_fractional_coverage(sys.stdin, excluded_features)
+    feature_counts = calculate_fractional_coverage(sys.stdin, excluded_features, args.whole_count)
     
     # Write to stdout
     write_output(feature_counts)

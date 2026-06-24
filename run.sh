@@ -83,7 +83,7 @@ run_command python scripts/subset_features_for_polymerase_analysis.py \
 run_command python scripts/find_genes_near_transposons.py \
 	--bed "$p_o_features_dir/Saccharomyces_cerevisiae_S288C.bed" \
 	--features "gene" \
-	--distance 2000 \
+	--distance 1 \
 	--output "$p_o_features_dir/genes_near_ty1.tsv"
 
 # Calculate genome coverage for all features
