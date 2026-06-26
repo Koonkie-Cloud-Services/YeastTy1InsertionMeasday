@@ -1409,6 +1409,47 @@ for (panel in unique(hm.meta_df$subunit)) {
 ```
 
 
+```{r subset-tRNA-gene-body-coverage-data}
+hm.trna_gene_cov_df <- hm.full_cov_df %>%
+  filter(
+    feature.name == 'tRNA',
+    !library %in% p.libs_for_filtering
+  ) %>%
+  dplyr::left_join(trna_df %>%
+                     select(trna.name, chr, start, end, strand),
+                   by = c("chr", "start", "end", "strand")) %>%
+  dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
+                                 replacement = '\\1',
+                                 x = trna.name)) %>%
+  summarise_coverage_by_feature(library, trna.name) %>%
+  dplyr::filter(trna.name != "tX")
+```
+
+```{r plot-trna-gene-body-coverage-heatmap, fig.cap="Normalised mean read coverage within tRNA genes. tRNA gene names are row names, library names are columns. The minimum, median (i.e., 50th percentile) and maximum values are shown in the colour scale, as well as the 75th and 90th percentiles. Mean coverage values were calculated by taking the average number of reads mapped within a tRNA gene divided by the length of the gene and number of million reads sequenced."}
+
+for (panel in unique(hm.meta_df$subunit)) {
+  draw(plot_genome_coverage_heatmap(
+    cov_mat = hm.trna_gene_cov_df %>%
+      extract_metadata_from_library_names() %>%
+      dplyr::filter(subunit == panel) %>%
+      dplyr::select(tidyselect::all_of(c(
+        "library",
+        "trna.name",
+        "vals" = "mean_cov.norm"
+      ))) %>%
+      tidyr::pivot_wider(names_from = "trna.name",
+                         values_from = "vals",
+                         values_fill = 0) %>%
+      tibble::column_to_rownames("library") %>%
+      t(),
+    meta_df = hm.meta_df %>%
+      dplyr::filter(subunit == panel),
+    annotations = c("strain.type", "sugar"),
+    brewer_palette_name = c("Set1", "Set3")
+  ))
+}
+```
+
 ```{r calc-trna-coverage-for-mutant-and-wt}
 
 # Currently hard-coded for tRNA features
@@ -1818,28 +1859,6 @@ trna_named_cov_df |>
   ggplot2::labs(y = "Normalised Coverage",
                 x = "tRNA gene") +
   theme_minimal()
-
-ggsave(filename = "trna-insertion-boxplots_v1.png",
-       height = 5,
-       width = 7)
-```
-
-```{r trna-insertion-boxplots-v2, fig.cap="Alternative visualisation", eval=FALSE}
-trna_named_cov_df |> 
-  summarise_coverage_by_feature(subunit, strain.type, group, chr, end, strand, trna.name, proximity) %>%
-  dplyr::filter(
-    trna.name != "tX",
-    proximity %in% c("upstream")
-  ) |>
-  dplyr::mutate(trna.name = reorder(trna.name, mean_cov.norm)) |> 
-  ggplot(aes(x = trna.name, y = mean_cov.norm)) +
-  geom_boxplot(aes(group = trna.name)) +
-  ggplot2::facet_grid(rows = vars(subunit),
-                      cols = vars(strain.type)) +
-  ggplot2::guides(fill = guide_legend("Genotype")) +
-  ggplot2::labs(y = "Normalised Coverage",
-                x = "tRNA gene") +
-  theme_minimal()
 ```
 
 # Appendix
@@ -2189,47 +2208,89 @@ for (panel in unique(hm.meta_df$subunit)) {
 }
 ```
 
+```{r define-feature-subunit-t-test-function}
+test_feature_coverage_by_subunit <- function(subunit_name,
+                                             feature_pattern,
+                                             cov_file_path = p.hm.uniq_cov_file,
+                                             blackout_df = feature_filter_df,
+                                             neighbourhoods = feature_neighbourhood_list,
+                                             library_size_df = read_counts_df,
+                                             libs_to_filter = p.libs_for_filtering) {
+  feat_df <- load_genome_coverage_data_frame(
+    file_path = cov_file_path,
+    blackout_df = blackout_df,
+    neighbourhoods = neighbourhoods,
+    library_size_df = library_size_df
+  ) |>
+    dplyr::filter(
+      !library %in% libs_to_filter,
+      grepl(pattern = feature_pattern, x = feature.name)
+    )
+  
+  if (nrow(feat_df) == 0 | length(unique(feat_df$feature.name)) == 0) {
+    message(paste("No features found for subunit", subunit_name, "with pattern", feature_pattern))
+    return(NULL)
+  }
+
+  feat_df <- feat_df |>
+    dplyr::select(all_of(c("library", "feature.name", "coverage.pbp.norm"))) |>
+    extract_metadata_from_library_names() |>
+    dplyr::filter(
+      subunit == subunit_name,
+      sugar == "Galactose"
+    )
+
+  ltr_t_test <- feat_df |>
+    dplyr::group_by(feature.name) |>
+    tidyr::nest() |>
+    dplyr::mutate(
+      ttest = purrr::map(data,
+                         subunit_wise_t_test_helper,
+                         paired = FALSE,
+                         conf.level = 0.99,
+                         alternative = "two.sided",
+                         values_col = "coverage.pbp.norm")
+    ) |>
+    tidyr::unnest(ttest) |>
+    dplyr::select(all_of(c("feature.name", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) |>
+    dplyr::mutate(
+      statistic = round(statistic, 2),
+      p.value = round(p.value, 4)
+    )
+
+  bold_rows <- which(ltr_t_test$p.value < 0.05)
+
+  ltr_t_test |>
+    knitr::kable(
+      col.names = c("LTR Feature", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+    ) |>
+    kableExtra::kable_minimal() |>
+    kableExtra::row_spec(bold_rows, bold = TRUE)
+}
+```
+
 ```{r test-ty1-ltr-across-rpc160, tab.cap="Two-sided t-test results comparing coverage values of LTR elements between RPC160 mutants and wild-type."}
-ltr_rpc160_df <- load_genome_coverage_data_frame(
-  file_path = p.hm.uniq_cov_file,
-  blackout_df = feature_filter_df,
-  neighbourhoods = feature_neighbourhood_list,
-  library_size_df = read_counts_df
-) |>
-  dplyr::filter(
-    !library %in% p.libs_for_filtering,
-    grepl(pattern = "LTR", x = feature.name)
-  ) |> 
-  select(all_of(c("library", "feature.name", "coverage.pbp.norm"))) |> 
-  extract_metadata_from_library_names() |> 
-  dplyr::filter(
-    subunit == "RPC160",
-    sugar == "Galactose"
-  )
+test_feature_coverage_by_subunit("RPC160", feature_pattern = "LTR")
+```
 
-ltr_rpc160_t_test <- ltr_rpc160_df |>
-  dplyr::group_by(feature.name) |>
-  tidyr::nest() |>
-  dplyr::mutate(
-    ttest = purrr::map(data,
-                       subunit_wise_t_test_helper,
-                       paired = FALSE,
-                       conf.level = 0.99,
-                       alternative = "two.sided",
-                       values_col = "coverage.pbp.norm")
-  ) |>
-  tidyr::unnest(ttest) |>
-  dplyr::select(all_of(c("feature.name", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) |>
-  dplyr::mutate(
-    statistic = round(statistic, 2),
-    p.value = round(p.value, 4)
-  )
+```{r test-ty1-ltr-across-rpc34, tab.cap="Two-sided t-test results comparing coverage values of LTR elements between RPC34 mutants and wild-type."}
+test_feature_coverage_by_subunit("RPC34", feature_pattern = "LTR")
+```
 
-ltr_rpc160_t_test |>
-  knitr::kable(
-    col.names = c("LTR Feature", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
-  ) |>
-  kableExtra::kable_minimal()
+```{r test-ty1-ltr-across-rpc53, tab.cap="Two-sided t-test results comparing coverage values of LTR elements between RPC53 mutants and wild-type."}
+test_feature_coverage_by_subunit("RPC53", feature_pattern = "LTR")
+```
+
+```{r test-ty1-retrotransposon-across-rpc160, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC160 mutants and wild-type."}
+test_feature_coverage_by_subunit("RPC160", feature_pattern = "retrotransposon")
+```
+
+```{r test-ty1-retrotransposon-across-rpc34, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC34 mutants and wild-type."}
+test_feature_coverage_by_subunit("RPC34", feature_pattern = "retrotransposon")
+```
+
+```{r test-ty1-retrotransposon-across-rpc53, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC53 mutants and wild-type."}
+test_feature_coverage_by_subunit("RPC53", feature_pattern = "retrotransposon")
 ```
 
 ### Bar-plots
