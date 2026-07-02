@@ -469,11 +469,12 @@ cowplot::plot_grid(dist_plot.a, dist_plot.b,
 
 TODO: group p-values as less than 0.001
 
-```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference between the tRNA coverages of mutant and wild-type strains."}
+```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference in Ty1 insertion between mutant and wild-type strains at regions upstream of tRNA genes."}
 
 bt.cov_t_test_res_table <- bt.cov_df %>%
   filter(
-    sugar == "Galactose",
+    # Keep libraries fed with dextrose
+    # sugar == "Galactose",
     subunit != "Other",
     proximity == "upstream"
   ) %>%
@@ -493,8 +494,7 @@ bt.cov_t_test_res_table <- bt.cov_df %>%
   tidyr::unnest(ttest) %>%
   dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
   dplyr::mutate(
-    statistic = round(statistic, 2),
-    p.value = round(p.value, 3)
+    statistic = round(statistic, 2)
   ) |> 
   knitr::kable(
     # format = "latex",
@@ -1004,11 +1004,24 @@ hm.full_cov_df <- load_genome_coverage_data_frame(
   neighbourhoods = feature_neighbourhood_list,
   library_size_df = read_counts_df
 ) %>%
-  select(-ends_with(".y")) %>% 
-  rename_with(~sub(".x$", "", .))
+  dplyr::select(-ends_with(".y")) %>% 
+  dplyr::rename_with(~sub(".x$", "", .))
+
+hm.full_uniq_cov_df <- load_genome_coverage_data_frame(
+  file_path = p.hm.uniq_cov_file,
+  blackout_df = feature_filter_df,
+  neighbourhoods = feature_neighbourhood_list,
+  library_size_df = read_counts_df
+) %>%
+  dplyr::select(-ends_with(".y")) %>% 
+  dplyr::rename_with(~sub(".x$", "", .))
+
+hm.uniq_cov_df <- hm.full_uniq_cov_df |> 
+  dplyr::filter(!library %in% p.libs_for_filtering) |> 
+  summarise_coverage_by_feature(library, feature.name)
 
 hm.cov_df <- hm.full_cov_df %>% 
-  filter(! library %in% p.libs_for_filtering) %>% 
+  filter(!library %in% p.libs_for_filtering) %>% 
   summarise_coverage_by_feature(library, feature.name)
 ```
 
@@ -1105,8 +1118,7 @@ ty1_rpc160_t_test <- ty1_rpc160_df |>
   ) |>
   dplyr::select(all_of(c("group", "statistic", "p.value", "wt.mean", "mut.mean"))) |>
   dplyr::mutate(
-    statistic = round(statistic, 2),
-    p.value = round(p.value, 4)
+    statistic = round(statistic, 2)
   )
 
 ty1_rpc160_t_test |>
@@ -1115,6 +1127,8 @@ ty1_rpc160_t_test |>
   ) |>
   kableExtra::kable_minimal()
 ```
+
+#### Genome-wide Feature Coverage
 
 ```{r write-feature-coverage-to-xlsx}
 
@@ -1358,100 +1372,7 @@ for (panel in unique(hm.meta_df$subunit)) {
 
 ## tRNA genes
 
-```{r subset-tRNA-features-from-coverage-data}
-hm.trna_cov_df <- hm.full_cov_df %>%
-  filter(
-    feature.name == 'tRNA upstream',
-    !library %in% p.libs_for_filtering
-  ) %>%
-  dplyr::mutate(
-    junction_pos = ifelse(strand == "+",
-                          end,
-                          start)
-  ) %>% 
-  dplyr::left_join(trna_df %>%
-                     mutate(junction_pos = ifelse(strand == "+",
-                                                  start,
-                                                  end)) %>% 
-                     select(trna.name, chr, strand, junction_pos),
-                   by = c("chr", "junction_pos", "strand")) %>% 
-  dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
-                                 replacement = '\\1',
-                                 x = trna.name)) %>% 
-  summarise_coverage_by_feature(library, trna.name) %>% 
-  dplyr::filter(trna.name != "tX")
-  
-```
-
-```{r plot-trna-coverage-heatmap, fig.cap="Normalised mean read coverage upstream of tRNA genes. tRNA gene names are row names, library names are columns. The minimum, median (i.e., 50th percentile) and maximum values are shown in the colour scale, as well as the 75th and 90th percentiles. Mean coverage values were calculated by taking the average number of reads mapped to a tRNA gene divided by the length of the gene and number of million reads sequenced.", fig.height=8, fig.width=10}
-
-for (panel in unique(hm.meta_df$subunit)) {
-  draw(plot_genome_coverage_heatmap(
-    cov_mat = hm.trna_cov_df %>% 
-      extract_metadata_from_library_names() %>% 
-      dplyr::filter(subunit == panel) %>% 
-      dplyr::select(tidyselect::all_of(c(
-        "library",
-        "trna.name",
-        "vals" = "mean_cov.norm"
-      ))) %>% 
-      tidyr::pivot_wider(names_from = "trna.name",
-                         values_from = "vals",
-                         values_fill = 0) %>% 
-      tibble::column_to_rownames("library") %>%
-      t(),
-    meta_df = hm.meta_df %>% 
-      dplyr::filter(subunit == panel),
-    annotations = c("strain.type", "sugar"),
-    brewer_palette_name = c("Set1", "Set3")
-  ))
-}
-```
-
-
-```{r subset-tRNA-gene-body-coverage-data}
-hm.trna_gene_cov_df <- hm.full_cov_df %>%
-  filter(
-    feature.name == 'tRNA',
-    !library %in% p.libs_for_filtering
-  ) %>%
-  dplyr::left_join(trna_df %>%
-                     select(trna.name, chr, start, end, strand),
-                   by = c("chr", "start", "end", "strand")) %>%
-  dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
-                                 replacement = '\\1',
-                                 x = trna.name)) %>%
-  summarise_coverage_by_feature(library, trna.name) %>%
-  dplyr::filter(trna.name != "tX")
-```
-
-```{r plot-trna-gene-body-coverage-heatmap, fig.cap="Normalised mean read coverage within tRNA genes. tRNA gene names are row names, library names are columns. The minimum, median (i.e., 50th percentile) and maximum values are shown in the colour scale, as well as the 75th and 90th percentiles. Mean coverage values were calculated by taking the average number of reads mapped within a tRNA gene divided by the length of the gene and number of million reads sequenced."}
-
-for (panel in unique(hm.meta_df$subunit)) {
-  draw(plot_genome_coverage_heatmap(
-    cov_mat = hm.trna_gene_cov_df %>%
-      extract_metadata_from_library_names() %>%
-      dplyr::filter(subunit == panel) %>%
-      dplyr::select(tidyselect::all_of(c(
-        "library",
-        "trna.name",
-        "vals" = "mean_cov.norm"
-      ))) %>%
-      tidyr::pivot_wider(names_from = "trna.name",
-                         values_from = "vals",
-                         values_fill = 0) %>%
-      tibble::column_to_rownames("library") %>%
-      t(),
-    meta_df = hm.meta_df %>%
-      dplyr::filter(subunit == panel),
-    annotations = c("strain.type", "sugar"),
-    brewer_palette_name = c("Set1", "Set3")
-  ))
-}
-```
-
-```{r calc-trna-coverage-for-mutant-and-wt}
-
+```{r define-mutant-and-wt-coverage-function}
 # Currently hard-coded for tRNA features
 calculate_feature_coverage_between_mutant_and_wt <- function(df) {
   cols <- c(
@@ -1496,7 +1417,181 @@ calculate_feature_coverage_between_mutant_and_wt <- function(df) {
     mutate(diff.abs = abs(mut.mean - wt.mean)) %>% 
     return()
 }
+```
 
+```{r define-trna-heatmap-helper-functions}
+# Subset upstream tRNA coverage from a full coverage data frame
+subset_trna_upstream_coverage <- function(full_cov_df, trna_df, libs_for_filtering) {
+  full_cov_df %>%
+    filter(
+      feature.name == 'tRNA upstream',
+      !library %in% libs_for_filtering
+    ) %>%
+    dplyr::mutate(
+      junction_pos = ifelse(strand == "+", end, start)
+    ) %>% 
+    dplyr::left_join(trna_df %>%
+                       mutate(junction_pos = ifelse(strand == "+", start, end)) %>% 
+                       select(trna.name, chr, strand, junction_pos),
+                     by = c("chr", "junction_pos", "strand")) %>% 
+    dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
+                                   replacement = '\\1',
+                                   x = trna.name)) %>% 
+    summarise_coverage_by_feature(library, trna.name) %>% 
+    dplyr::filter(trna.name != "tX")
+}
+
+# Subset gene-body tRNA coverage from a full coverage data frame
+subset_trna_gene_body_coverage <- function(full_cov_df, trna_df, libs_for_filtering) {
+  full_cov_df %>%
+    filter(
+      feature.name == 'tRNA',
+      !library %in% libs_for_filtering
+    ) %>%
+    dplyr::left_join(trna_df %>%
+                       select(trna.name, chr, start, end, strand),
+                     by = c("chr", "start", "end", "strand")) %>%
+    dplyr::mutate(trna.name = gsub(pattern = '^(t.).*',
+                                   replacement = '\\1',
+                                   x = trna.name)) %>%
+    summarise_coverage_by_feature(library, trna.name) %>%
+    dplyr::filter(trna.name != "tX")
+}
+
+# Plot tRNA coverage heatmaps for each subunit panel
+plot_trna_heatmaps_by_subunit <- function(trna_cov_df, meta_df) {
+  for (panel in unique(meta_df$subunit)) {
+    draw(plot_genome_coverage_heatmap(
+      cov_mat = trna_cov_df %>% 
+        extract_metadata_from_library_names() %>% 
+        dplyr::filter(subunit == panel) %>% 
+        dplyr::select(tidyselect::all_of(c(
+          "library",
+          "trna.name",
+          "vals" = "mean_cov.norm"
+        ))) %>% 
+        tidyr::pivot_wider(names_from = "trna.name",
+                           values_from = "vals",
+                           values_fill = 0) %>% 
+        tibble::column_to_rownames("library") %>%
+        t(),
+      meta_df = meta_df %>% 
+        dplyr::filter(subunit == panel),
+      annotations = c("strain.type", "sugar"),
+      brewer_palette_name = c("Set1", "Set3")
+    ))
+  }
+}
+
+# Run t-tests on tRNA coverage comparing mutant vs wild-type
+run_trna_coverage_t_tests <- function(named_cov_df, feature_filter, libs_for_filtering,
+                                      conf.level = 0.95, output_file = NULL) {
+  tmp_trna_cov_df <- named_cov_df %>%
+    filter(
+      feature.name == feature_filter,
+      !library %in% libs_for_filtering,
+      sugar == "Galactose",
+      subunit != "Other"
+    ) %>%
+    dplyr::mutate(
+      coverage.sum = coverage.pbp.norm
+    ) %>%
+    dplyr::group_by(subunit, strain.type, group, trna.name) %>%
+    dplyr::mutate(trna_obs = n()) %>%
+    dplyr::filter(
+      !is.na(trna.name),
+      trna_obs > 3
+    ) %>%
+    dplyr::select(all_of(c(
+      "subunit",
+      "sugar",
+      "strain.type",
+      "group",
+      "trna.type" = "trna.name",
+      "coverage.sum"
+    )))
+
+  trna_cov_stats_df <- tmp_trna_cov_df %>%
+    group_by(subunit, group, trna.type) %>%
+    dplyr::reframe(
+      mean = mean(coverage.sum),
+      var = var(coverage.sum)
+    )
+
+  trna_t_test_res_df <- tmp_trna_cov_df %>%
+    dplyr::group_by(subunit, trna.type) %>%
+    tidyr::nest() %>%
+    dplyr::mutate(
+      ttest = purrr::map(data,
+                         subunit_wise_t_test_helper,
+                         paired = FALSE,
+                         conf.level = conf.level,
+                         alternative = "two.sided",
+                         values_col = "coverage.sum")
+    ) %>%
+    tidyr::unnest(ttest) %>%
+    dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean"))) %>% 
+    left_join(trna_cov_stats_df,
+              by = c("subunit", "trna.type", "group"))
+
+  sig_trna_types <- trna_t_test_res_df %>%
+    dplyr::filter(p.value < 0.05) %>%
+    dplyr::pull(trna.type) %>%
+    unique()
+
+  trna_t_test_res_df <- trna_t_test_res_df %>%
+    dplyr::filter(trna.type %in% sig_trna_types)
+
+  bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
+
+  trna_t_test_res_df %>%
+    knitr::kable() |> 
+    kableExtra::kable_minimal() |> 
+    kableExtra::row_spec(bold_rows, bold = TRUE) |> 
+    as.character() |> 
+    cat()
+
+  if (!render_pdf && !is.null(output_file)) {
+    kableExtra::save_kable(
+      x = trna_t_test_res_df %>%
+        knitr::kable(
+          digits = Inf,
+          col.names = c("Subunit", "tRNA", "Library", "p-value", "WT mean", "Mutant mean", "Mutant variance")
+        ) %>% 
+        kableExtra::row_spec(bold_rows, bold = TRUE) %>% 
+        kableExtra::kable_minimal(),
+      file = output_file
+    )
+  }
+  
+  invisible(trna_t_test_res_df)
+}
+```
+
+### Non-unique alignments
+
+```{r subset-tRNA-features-from-coverage-data}
+hm.trna_cov_df <- subset_trna_upstream_coverage(hm.full_cov_df, trna_df, p.libs_for_filtering)
+```
+
+#### Heatmaps (non-unique)
+
+```{r plot-trna-coverage-heatmap, fig.cap="Normalised mean read coverage upstream of tRNA genes. tRNA gene names are row names, library names are columns. The minimum, median (i.e., 50th percentile) and maximum values are shown in the colour scale, as well as the 75th and 90th percentiles. Mean coverage values were calculated by taking the average number of reads mapped to a tRNA gene divided by the length of the gene and number of million reads sequenced.", fig.height=8, fig.width=10}
+
+plot_trna_heatmaps_by_subunit(hm.trna_cov_df, hm.meta_df)
+```
+
+
+```{r subset-tRNA-gene-body-coverage-data}
+hm.trna_gene_cov_df <- subset_trna_gene_body_coverage(hm.full_cov_df, trna_df, p.libs_for_filtering)
+```
+
+```{r plot-trna-gene-body-coverage-heatmap, fig.cap="Normalised mean read coverage within tRNA genes. tRNA gene names are row names, library names are columns. The minimum, median (i.e., 50th percentile) and maximum values are shown in the colour scale, as well as the 75th and 90th percentiles. Mean coverage values were calculated by taking the average number of reads mapped within a tRNA gene divided by the length of the gene and number of million reads sequenced."}
+
+plot_trna_heatmaps_by_subunit(hm.trna_gene_cov_df, hm.meta_df)
+```
+
+```{r calc-trna-coverage-for-mutant-and-wt}
 trna_named_cov_df <- hm.full_cov_df %>%
   dplyr::filter(
     grepl(pattern = 'tRNA', x = feature.name),
@@ -1588,169 +1683,27 @@ trna_cov_df.mut_vs_wt |>
 outlier_trna_type_list <- c("tE", "tW", "tH", "tC", "tN")
 ```
 
-### T-tests
+#### T-tests (non-unique)
 
-```{r trna-coverage-t-test-gene, tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. All tRNAs were tested (not just those observed to be outliers from the scatterplot figure). Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
-tmp_trna_cov_df <- trna_named_cov_df %>%
-  filter(
-    feature.name == 'tRNA',
-    !library %in% p.libs_for_filtering,
-    sugar == "Galactose",
-    subunit != "Other"
-  ) %>%
-  dplyr::mutate(
-    coverage.sum = coverage.pbp.norm
-  ) %>%
-  dplyr::group_by(subunit, strain.type, group, trna.name) %>%
-  dplyr::mutate(trna_obs = n()) %>%
-  dplyr::filter(
-    # trna.name %in% outlier_trna_type_list,
-    !is.na(trna.name),
-    trna_obs > 3
-  ) %>%
-  dplyr::select(all_of(c(
-    "subunit",
-    "sugar",
-    "strain.type",
-    "group",
-    "trna.type" = "trna.name",
-    "coverage.sum"
-  )))
-
-trna_cov_stats_df <- tmp_trna_cov_df %>%
-  # filter(trna.type == "tW",
-  #        subunit == "RPC160") |> 
-  group_by(subunit, group, trna.type) %>%
-  dplyr::reframe(
-    mean = mean(coverage.sum),
-    var = var(coverage.sum)
-  )
-
-trna_t_test_res_df <- tmp_trna_cov_df %>%
-  dplyr::group_by(subunit, trna.type) %>%
-  tidyr::nest() %>%
-  dplyr::mutate(
-    ttest = purrr::map(data,
-                       subunit_wise_t_test_helper,
-                       paired = FALSE,
-                       conf.level = 0.95,
-                       alternative = "two.sided",
-                       values_col = "coverage.sum")
-  ) %>%
-  tidyr::unnest(ttest) %>%
-  dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean"))) %>% 
-  left_join(trna_cov_stats_df,
-            by = c("subunit", "trna.type", "group"))
-
-sig_trna_types <- trna_t_test_res_df %>%
-  dplyr::filter(p.value < 0.05) %>%
-  dplyr::pull(trna.type) %>%
-  unique()
-
-trna_t_test_res_df <- trna_t_test_res_df %>%
-  dplyr::filter(trna.type %in% sig_trna_types)
-
-bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
-
-trna_t_test_res_df %>%
-  knitr::kable() |> 
-  kableExtra::kable_minimal() |> 
-  kableExtra::row_spec(bold_rows, bold = TRUE)
-
-if (!render_pdf) {
-  kableExtra::save_kable(
-    x = trna_t_test_res_df %>%
-      knitr::kable(
-        digits = Inf,
-        col.names = c("Subunit", "tRNA", "Library", "p-value", "WT mean", "Mutant mean", "Mutant variance")
-      ) %>% 
-      kableExtra::row_spec(bold_rows, bold = TRUE) %>% 
-      kableExtra::kable_minimal(),
-    file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
-  )
-}
-rm(tmp_trna_cov_df)
+```{r trna-coverage-t-test-gene, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. All tRNAs were tested (not just those observed to be outliers from the scatterplot figure). Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
+run_trna_coverage_t_tests(
+  trna_named_cov_df,
+  feature_filter = "tRNA",
+  libs_for_filtering = p.libs_for_filtering,
+  conf.level = 0.95,
+  output_file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
+)
 ```
 
 
-```{r trna-coverage-t-test-upstream, tab.cap=paste("Welch's two-sample t-test results comparing upstream tRNA coverage between mutants and wild-type. Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
-tmp_trna_cov_df <- trna_named_cov_df %>%
-  filter(
-    feature.name == 'tRNA upstream',
-    !library %in% p.libs_for_filtering,
-    sugar == "Galactose",
-    subunit != "Other"
-  ) %>%
-  dplyr::mutate(
-    coverage.sum = coverage.pbp.norm
-  ) %>%
-  dplyr::group_by(subunit, strain.type, group, trna.name) %>%
-  dplyr::mutate(trna_obs = n()) %>%
-  dplyr::filter(
-    #trna.name %in% outlier_trna_type_list,
-    !is.na(trna.name),
-    trna_obs > 3
-  ) %>%
-  dplyr::select(all_of(c(
-    "subunit",
-    "sugar",
-    "strain.type",
-    "group",
-    "trna.type" = "trna.name",
-    "coverage.sum"
-  )))
-
-trna_cov_stats_df <- tmp_trna_cov_df %>%
-  group_by(subunit, group, trna.type) %>%
-  dplyr::reframe(
-    mean = mean(coverage.sum),
-    var = var(coverage.sum)
-  )
-
-trna_t_test_res_df <- tmp_trna_cov_df %>%
-  dplyr::group_by(subunit, trna.type) %>%
-  tidyr::nest() %>%
-  dplyr::mutate(
-    ttest = purrr::map(data,
-                       subunit_wise_t_test_helper,
-                       paired = FALSE,
-                       conf.level = 0.99,
-                       alternative = "two.sided",
-                       values_col = "coverage.sum")
-  ) %>%
-  tidyr::unnest(ttest) %>%
-  dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean"))) %>% 
-  left_join(trna_cov_stats_df,
-            by = c("subunit", "trna.type", "group"))
-
-sig_trna_types <- trna_t_test_res_df %>%
-  dplyr::filter(p.value < 0.05) %>%
-  dplyr::pull(trna.type) %>%
-  unique()
-
-trna_t_test_res_df <- trna_t_test_res_df %>%
-  dplyr::filter(trna.type %in% sig_trna_types)
-
-bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
-
-trna_t_test_res_df %>%
-  knitr::kable() |> 
-  kableExtra::kable_minimal() |> 
-  kableExtra::row_spec(bold_rows, bold = TRUE)
-
-if (!render_pdf) {
-  kableExtra::save_kable(
-    x = trna_t_test_res_df %>%
-      knitr::kable(
-        digits = Inf,
-        col.names = c("Subunit", "tRNA", "Library", "p-value", "WT mean", "Mutant mean", "Mutant variance")
-      ) %>% 
-      kableExtra::row_spec(bold_rows, bold = TRUE) %>% 
-      kableExtra::kable_minimal(),
-    file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
-  )
-}
-rm(tmp_trna_cov_df)
+```{r trna-coverage-t-test-upstream, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing upstream tRNA coverage between mutants and wild-type. Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
+run_trna_coverage_t_tests(
+  trna_named_cov_df,
+  feature_filter = "tRNA upstream",
+  libs_for_filtering = p.libs_for_filtering,
+  conf.level = 0.99,
+  output_file = file.path(params$output_dir, "t-test_tRNA_upstream_coverage_table.pdf")
+)
 ```
 
 ```{r plot-tW-trna-distribution, fig.cap="Distribution of normalised coverage values upstream of tW tRNA genes for each library, faceted by subunit group.", fig.height=6, fig.width=10}
@@ -1873,6 +1826,90 @@ trna_named_cov_df |>
   ggplot2::labs(y = "Normalised Coverage",
                 x = "tRNA gene") +
   theme_minimal()
+```
+
+### Unique alignments
+
+```{r subset-tRNA-features-from-unique-coverage-data}
+hm.trna_uniq_cov_df <- subset_trna_upstream_coverage(hm.full_uniq_cov_df, trna_df, p.libs_for_filtering)
+```
+
+#### Heatmaps (unique)
+
+```{r plot-trna-unique-coverage-heatmap, fig.cap="Normalised mean read coverage upstream of tRNA genes using uniquely-mapped reads only. tRNA gene names are row names, library names are columns.", fig.height=8, fig.width=10}
+
+plot_trna_heatmaps_by_subunit(hm.trna_uniq_cov_df, hm.meta_df)
+```
+
+```{r subset-tRNA-gene-body-unique-coverage-data}
+hm.trna_gene_uniq_cov_df <- subset_trna_gene_body_coverage(hm.full_uniq_cov_df, trna_df, p.libs_for_filtering)
+```
+
+```{r plot-trna-gene-body-unique-coverage-heatmap, fig.cap="Normalised mean read coverage within tRNA genes using uniquely-mapped reads only. tRNA gene names are row names, library names are columns."}
+
+plot_trna_heatmaps_by_subunit(hm.trna_gene_uniq_cov_df, hm.meta_df)
+```
+
+```{r calc-trna-unique-coverage-for-mutant-and-wt}
+trna_named_uniq_cov_df <- hm.full_uniq_cov_df %>%
+  dplyr::filter(
+    grepl(pattern = 'tRNA', x = feature.name),
+    !library %in% p.libs_for_filtering
+  ) %>%
+  select(!all_of(c("subunit", "sugar", "strain.type", "group"))) |> 
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, end),
+                   by = c("chr", "end")) %>%
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, start),
+                   by = c("chr", "end" = "start"),
+                   suffix = c('', '.up')) %>%
+  dplyr::left_join(trna_df %>% 
+                     select(trna.name, chr, end),
+                   by = c("chr", "start" = "end"),
+                   suffix = c('', '.down')) |>
+  dplyr::mutate(
+    trna.name = coalesce(trna.name, trna.name.up, trna.name.down),
+    trna.name = gsub(pattern = '^(t.).*',
+                     replacement = '\\1',
+                     x = trna.name),
+    proximity = case_when(
+      feature.name == "tRNA" ~ "gene",
+      feature.name == "tRNA upstream" ~ "upstream",
+      feature.name == "tRNA downstream" ~ "downstream",
+      .default = NA
+    )
+  ) |> 
+  complete(library,
+           nesting(trna.name, proximity, chr, start, end, strand),
+           fill = list(coverage.pbp.norm = 0)) |> 
+  extract_metadata_from_library_names() |> 
+  dplyr::filter(
+    sugar == "Galactose",
+    subunit != "Other"
+  )
+```
+
+#### T-tests (unique)
+
+```{r trna-unique-coverage-t-test-gene, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type, using uniquely-mapped reads only.")}
+run_trna_coverage_t_tests(
+  trna_named_uniq_cov_df,
+  feature_filter = "tRNA",
+  libs_for_filtering = p.libs_for_filtering,
+  conf.level = 0.95,
+  output_file = file.path(params$output_dir, "t-test_tRNA_gene_unique_coverage_table.pdf")
+)
+```
+
+```{r trna-unique-coverage-t-test-upstream, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing upstream tRNA coverage between mutants and wild-type, using uniquely-mapped reads only.")}
+run_trna_coverage_t_tests(
+  trna_named_uniq_cov_df,
+  feature_filter = "tRNA upstream",
+  libs_for_filtering = p.libs_for_filtering,
+  conf.level = 0.99,
+  output_file = file.path(params$output_dir, "t-test_tRNA_upstream_unique_coverage_table.pdf")
+)
 ```
 
 # Appendix
@@ -2184,16 +2221,6 @@ if (!render_pdf) {
 ### Coverage using unique alignments
 
 ```{r plot-uniq-cov-heatmap, fig.cap = "Heatmap of genome feature mean coverage values for each library - for unambiguous alignments. Mean coverage was calculated by dividing the number of reads that aligned within a feature by the feature's length in base-pairs. Alignments that mapped ambiguously to multiple regions were removed.", fig.width=10}
-hm.uniq_cov_df <- load_genome_coverage_data_frame(
-  file_path = p.hm.uniq_cov_file,
-  blackout_df = feature_filter_df,
-  neighbourhoods = feature_neighbourhood_list,
-  library_size_df = read_counts_df
-) %>%
-  dplyr::filter(
-    !library %in% p.libs_for_filtering
-  ) %>% 
-  summarise_coverage_by_feature(library, feature.name)
 
 for (panel in unique(hm.meta_df$subunit)) {
   draw(plot_genome_coverage_heatmap(
@@ -2269,7 +2296,7 @@ test_feature_coverage_by_subunit <- function(subunit_name,
     dplyr::select(all_of(c("feature.name", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) |>
     dplyr::mutate(
       statistic = round(statistic, 2),
-      p.value = round(p.value, 4)
+      # p.value = round(p.value, 4)
     )
 
   bold_rows <- which(ltr_t_test$p.value < 0.05)
@@ -2296,15 +2323,15 @@ test_feature_coverage_by_subunit("RPC53", feature_pattern = "LTR")
 ```
 
 ```{r test-ty1-retrotransposon-across-rpc160, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC160 mutants and wild-type."}
-test_feature_coverage_by_subunit("RPC160", feature_pattern = "retrotransposon")
+test_feature_coverage_by_subunit("RPC160", feature_pattern = "retrotransposon", cov_file_path = p.hm.cov_file)
 ```
 
 ```{r test-ty1-retrotransposon-across-rpc34, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC34 mutants and wild-type."}
-test_feature_coverage_by_subunit("RPC34", feature_pattern = "retrotransposon")
+test_feature_coverage_by_subunit("RPC34", feature_pattern = "retrotransposon", cov_file_path = p.hm.cov_file)
 ```
 
 ```{r test-ty1-retrotransposon-across-rpc53, tab.cap="Two-sided t-test results comparing Ty1 retrotransposon coverage between RPC53 mutants and wild-type."}
-test_feature_coverage_by_subunit("RPC53", feature_pattern = "retrotransposon")
+test_feature_coverage_by_subunit("RPC53", feature_pattern = "retrotransposon", cov_file_path = p.hm.cov_file)
 ```
 
 ### Bar-plots
@@ -2377,12 +2404,4 @@ for (subunit_name in target_subunits) {
     plot(plt)
   }
 }
-```
-
-### Percentage of insertions across genome features
-
-TODO: Create a table breaking down the normalised coverage values as percentages across genome features
-
-```{r genome-feature-percentrage, tab.cap=""}
-
 ```
