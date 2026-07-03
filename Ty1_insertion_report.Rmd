@@ -473,14 +473,15 @@ TODO: group p-values as less than 0.001
 
 bt.cov_t_test_res_table <- bt.cov_df %>%
   filter(
-    # Keep libraries fed with dextrose
-    # sugar == "Galactose",
+    sugar == "Galactose",
     subunit != "Other",
     proximity == "upstream"
   ) %>%
-  group_by(strain.type, trna.name, library, subunit, group) %>%
-  summarise(coverage.sum = sum(coverage.norm),
-            .groups = "keep") %>%
+  group_by(strain.type, trna.name, library, sugar, subunit, group) %>%
+  summarise(
+    coverage.sum = sum(coverage.norm),
+    .groups = "keep"
+  ) %>%
   dplyr::group_by(subunit) %>%
   tidyr::nest() %>%
   dplyr::mutate(
@@ -493,16 +494,55 @@ bt.cov_t_test_res_table <- bt.cov_df %>%
   ) %>%
   tidyr::unnest(ttest) %>%
   dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
+  dplyr::mutate(sugar = "Galactose")
+
+bt.sugar_cov_t_test_res_table <- bt.cov_df %>%
+  # mutate(
+  #   group = ifelse(sugar == "Dextrose" & group == "WT",
+  #                  "WT-Dex",
+  #                  group)
+  # ) |> 
+  filter(
+    # Keep libraries fed with dextrose
+    # sugar == "Galactose",
+    subunit != "Other",
+    proximity == "upstream"
+  ) %>%
+  group_by(strain.type, trna.name, library, sugar, subunit, group) %>%
+  summarise(
+    coverage.sum = sum(coverage.norm),
+    .groups = "keep"
+  ) %>%
+  dplyr::group_by(subunit) %>%
+  tidyr::nest() %>%
+  dplyr::mutate(
+    ttest = purrr::map(data,
+                       sugar_wise_t_test_helper,
+                       paired = FALSE,
+                       conf.level = 0.99,
+                       alternative = "two.sided",
+                       values_col = "coverage.sum")
+  ) %>%
+  tidyr::unnest(ttest) %>%
+  dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean" = "wt.galactose.mean", "mut.mean" = "dextrose.mean"))) %>%
+  dplyr::mutate(sugar = "Dextrose")
+
+bt.combined_cov_t_test_res_kable <- dplyr::bind_rows(
+  bt.cov_t_test_res_table,
+  bt.sugar_cov_t_test_res_table
+) |> 
   dplyr::mutate(
     statistic = round(statistic, 2)
   ) |> 
+  arrange(pick(c("subunit", "group", "sugar", "statistic"))) |>
+  dplyr::relocate(sugar, .after = group) |> 
   knitr::kable(
     # format = "latex",
     digits = Inf, 
     # escape = TRUE,
     # booktabs = TRUE,
     # longtable = FALSE,
-    col.names = c("Subunit", "Library", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+    col.names = c("Subunit", "Library", "Sugar", "T-test statistic", "p-value", "WT mean", "Mutant mean")
   )  |>
   kableExtra::kable_minimal() # |>
   # kableExtra::kable_styling(
@@ -511,13 +551,43 @@ bt.cov_t_test_res_table <- bt.cov_df %>%
   #   latex_table_env = "tabular"
   # )
 
-bt.cov_t_test_res_table
+bt.combined_cov_t_test_res_kable
 if (!render_pdf) {
   kableExtra::save_kable(
-    bt.cov_t_test_res_table,
+    bt.combined_cov_t_test_res_kable,
     file = file.path(params$output_dir, "t-test_tRNA_coverage_table.pdf")
   )
 }
+
+```
+
+We also included a dextrose control for both the RPC53 wild-type and rpc53delta2-280 mutant strain and demonstrated that there is no difference between the two.
+
+```{r rpc-sugar-t-test, tab.cap="Comparison between Ty1 insertion upstream of tRNA genes for the RPC 53 WT and delta-2-280 dextrose libraries."}
+
+bt.rpc53_sugar_df <- bt.cov_df |> 
+  filter(
+    library %in% c("Rpc53WT-Dex", "rpc53-delta-2-280-Dex"),
+    proximity == "upstream"
+  ) |> 
+  group_by(trna.name, library) |> 
+  summarise(
+    coverage.sum = sum(coverage.norm),
+    .groups = "drop"
+  )
+
+t.test(
+  x = bt.rpc53_sugar_df |> filter(library == "rpc53-delta-2-280-Dex") |> pull(coverage.sum),
+  y = bt.rpc53_sugar_df |> filter(library == "Rpc53WT-Dex") |> pull(coverage.sum),
+  paired = TRUE,
+  alternative = "two.sided"
+) |>
+  broom::tidy() |> 
+  knitr::kable()
+
+# bt.rpc53_sugar_df |> 
+#   ggplot(aes(x = library, y = coverage.sum)) +
+#   geom_boxplot()
 
 ```
 
