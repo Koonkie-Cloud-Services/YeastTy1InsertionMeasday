@@ -2044,9 +2044,16 @@ get_trna_codon_df <- function(coverage_df, meta_df, proximity = "gene") {
                                        pattern = "\\).*$",
                                        replacement = ")") 
     ) |>
-    group_by(library, trna.name) |> 
-    summarise(mean_cov.norm = sum(coverage.pbp.norm),
-              .groups = "drop_last")
+    group_by(library, strand, trna.name) |> 
+    summarise(
+      n_isoacceptors = n(),
+      mean_cov.norm = sum(coverage.pbp.norm) / n_isoacceptors,
+      .groups = "drop_last"
+    ) |> 
+    ungroup() |> 
+    summarise(mean_cov.norm = sum(mean_cov.norm),
+              # .groups = "drop",
+              .by = all_of(c("library", "trna.name")))
 }
 ```
 
