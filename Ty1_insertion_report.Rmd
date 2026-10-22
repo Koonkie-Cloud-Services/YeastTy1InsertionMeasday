@@ -359,7 +359,7 @@ There is no significant difference between the two strands. Coverage upstream of
 
 ### Strand insertion at each tRNA gene
 
-```{r strand-difference-box-and-whisker, fig.cap="Coverage difference values were calculated by subtracting the coverage of the negative strand from the coverage of the positive strand for each tRNA gene. Only positions upstream of the tRNA genes were used."}
+```{r strand-difference-box-and-whisker, fig.cap="Difference in normalised Ty1 insertion coverage between the positive and negative strands within 1 kb upstream of each tRNA gene (positive minus negative; values above zero indicate positive-strand bias). Boxes show the distribution across tRNA genes for each strain, coloured by treatment: [mutant, galactose], [wild type, galactose] and [wild type, dextrose]. The line in each box is the median, the box spans the first to third quartiles, whiskers extend to 1.5× the interquartile range, and points beyond them are outliers. Strains are labelled on the left and the RPC subunit on the right."}
 
 bt.strand_diff_df %>% 
   filter(proximity == "upstream",
