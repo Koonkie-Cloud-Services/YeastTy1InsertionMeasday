@@ -1,4 +1,4 @@
-# KOMB: Ty1 retrotransposon insertion analysis in *S. cerevisiae*
+# Ty1 retrotransposon insertion analysis in *S. cerevisiae*
 
 ## Purpose
 
