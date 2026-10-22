@@ -1531,8 +1531,7 @@ subset_trna_gene_body_coverage <- function(full_cov_df, trna_df, libs_for_filter
 # Plot tRNA coverage heatmaps for each subunit panel
 plot_trna_heatmaps_by_subunit <- function(trna_cov_df, meta_df) {
   for (panel in unique(meta_df$subunit)) {
-    draw(plot_genome_coverage_heatmap(
-      cov_mat = trna_cov_df %>% 
+    subset_cov_mat <- trna_cov_df %>% 
         extract_metadata_from_library_names() %>% 
         dplyr::filter(subunit == panel) %>% 
         dplyr::select(tidyselect::all_of(c(
@@ -1544,8 +1543,25 @@ plot_trna_heatmaps_by_subunit <- function(trna_cov_df, meta_df) {
                            values_from = "vals",
                            values_fill = 0) %>% 
         tibble::column_to_rownames("library") %>%
-        t(),
-      meta_df = meta_df %>% 
+        t()
+    if ( length(subset_cov_mat) == 0 ) {
+      print(paste0("Skipping ", panel))
+      next
+    }
+    subset_cov_mat[!is.finite(subset_cov_mat)] <- 0
+    # Canberra distance is NaN for all-zero rows/columns, which breaks hclust
+    subset_cov_mat <- subset_cov_mat[
+      rowSums(subset_cov_mat != 0) > 0,
+      colSums(subset_cov_mat != 0) > 0,
+      drop = FALSE
+    ]
+    if (length(subset_cov_mat) == 0 || round(max(subset_cov_mat), 3) == 0) {
+      print(paste0("Skipping ", panel, ": no non-zero coverage"))
+      next
+    }
+    draw(plot_genome_coverage_heatmap(
+      cov_mat = subset_cov_mat,
+      meta_df = meta_df[colnames(subset_cov_mat), , drop = FALSE] %>% 
         dplyr::filter(subunit == panel),
       annotations = c("strain.type", "sugar"),
       brewer_palette_name = c("Set1", "Set3")
@@ -1983,6 +1999,85 @@ run_trna_coverage_t_tests(
 ```
 
 # Appendix
+
+## tRNA anti-codon heatmaps
+
+```{r define-trna-codon-dataframe}
+get_trna_codon_df <- function(coverage_df, meta_df, proximity = "gene") {
+  coverage_df %>%
+    dplyr::filter(
+      grepl(pattern = 'tRNA', x = feature.name),
+      !library %in% p.libs_for_filtering
+    ) %>%
+    # Strip library metadata
+    select(!any_of(c("subunit", "sugar", "strain.type", "group"))) |> 
+    dplyr::left_join(trna_df %>% 
+                       select(trna.name, chr, end),
+                     by = c("chr", "end")) %>%
+    dplyr::left_join(trna_df %>% 
+                       select(trna.name, chr, start),
+                     by = c("chr", "end" = "start"),
+                     suffix = c('', '.up')) %>%
+    dplyr::left_join(trna_df %>% 
+                       select(trna.name, chr, end),
+                     by = c("chr", "start" = "end"),
+                     suffix = c('', '.down')) |>
+    dplyr::mutate(
+      trna.name = coalesce(trna.name, trna.name.up, trna.name.down),
+      proximity = case_when(
+        feature.name == "tRNA" ~ "gene",
+        feature.name == "tRNA upstream" ~ "upstream",
+        feature.name == "tRNA downstream" ~ "downstream",
+        .default = NA
+      )
+    ) |> 
+    complete(library,
+             nesting(trna.name, proximity, chr, start, end, strand),
+             fill = list(coverage.pbp.norm = 0)) |> 
+    extract_metadata_from_library_names() |> 
+    dplyr::filter(
+      proximity == {{proximity}},
+      library %in% rownames(meta_df)
+    ) |>
+    mutate(
+      trna.name = stringr::str_replace(trna.name,
+                                       pattern = "\\).*$",
+                                       replacement = ")") 
+    ) |>
+    group_by(library, trna.name) |> 
+    summarise(mean_cov.norm = sum(coverage.pbp.norm),
+              .groups = "drop_last")
+}
+```
+
+TODO: divide by copy number of the tRNA gene
+
+```{r trna-codon-coverage-plot}
+trna_codon_meta_df <- hm.meta_df |> 
+  filter(
+    subunit %in% c("RPC160", "RPC34"),
+    # sugar == "Galactose"
+  )
+
+plot_trna_heatmaps_by_subunit(
+  trna_cov_df = get_trna_codon_df(
+    hm.full_cov_df, meta_df = trna_codon_meta_df, proximity = "gene"
+  ) |> 
+    filter(trna.name != "tX(XXX)"),
+  meta_df = trna_codon_meta_df
+)
+```
+
+
+```{r trna-codon-unique-coverage-plot}
+plot_trna_heatmaps_by_subunit(
+  trna_cov_df = get_trna_codon_df(
+    hm.full_uniq_cov_df, meta_df = trna_codon_meta_df, proximity = "upstream"
+  ) |> 
+    filter(trna.name != "tX(XXX)"),
+  meta_df = trna_codon_meta_df
+)
+```
 
 ## Ty1 insertion quantification at tRNA genes
 

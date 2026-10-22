@@ -323,9 +323,9 @@ plot_genome_coverage_heatmap <- function(cov_mat,
   hm_legend_breaks <- quantile(cov_mat, probs = c(0, 0.5, 0.75, 0.9, 1))
   hm_legend <- list(
     title = legend_title,
-    at = round(
+    at = unique(round(
       hm_legend_breaks,
-      n_sig_digits)
+      n_sig_digits))
   )
   
   if (round(max(cov_mat), n_sig_digits) == 0) {
