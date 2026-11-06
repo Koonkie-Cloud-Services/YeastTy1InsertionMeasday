@@ -97,3 +97,65 @@ sugar_wise_t_test_helper <- function(df, values_col, ...) {
   }
   return(res_cat_df)
 }
+
+
+paired_log_cpm_wilcoxon <- function(df, ref_library, test_library,
+                                    count_col = "coverage.count",
+                                    size_col = "seq_library_size",
+                                    pseudocount = 0.5,
+                                    conf.level = 0.99,
+                                    id_col = "trna.name",
+                                    exact = FALSE) {
+  # Paired (by tRNA gene) Wilcoxon signed-rank test on log2 counts-per-million.
+  # Required columns: library, <id_col> (unique per library), <count_col> (raw counts),
+  # <size_col> (library size).
+  # Counts are over-dispersed (variance >> mean) and contain a few zeros, so
+  # log2((count + pseudocount) / library size * 1e6) stabilises the variance, keeps zeros
+  # finite, and makes the paired difference a log2 fold change. The rank-based test does not
+  # assume normality of the differences. Genes with no coverage in either library carry no
+  # information and are removed.
+  to_cpm <- function(lib) {
+    df %>%
+      dplyr::filter(library == lib) %>%
+      dplyr::transmute(
+        id = .data[[id_col]],
+        count = .data[[count_col]],
+        cpm = .data[[count_col]] / .data[[size_col]] * 1e6,
+        log2.cpm = log2((.data[[count_col]] + pseudocount) / .data[[size_col]] * 1e6)
+      )
+  }
+  paired_df <- dplyr::inner_join(
+    to_cpm(ref_library), to_cpm(test_library),
+    by = "id", suffix = c(".ref", ".test")
+  ) %>%
+    dplyr::filter(count.ref + count.test > 0)
+
+  if (all(paired_df$log2.cpm.test == paired_df$log2.cpm.ref)) {
+    return(tibble::tibble(
+      n.genes = nrow(paired_df), statistic = NA_real_, p.value = NA_real_,
+      log2.fc = NA_real_, conf.low = NA_real_, conf.high = NA_real_,
+      wt.mean = mean(paired_df$cpm.ref), mut.mean = mean(paired_df$cpm.test)
+    ))
+  }
+
+  wt <- suppressWarnings(
+    stats::wilcox.test(
+      x = paired_df$log2.cpm.test,
+      y = paired_df$log2.cpm.ref,
+      paired = TRUE,
+      conf.int = TRUE,
+      conf.level = conf.level,
+      exact = exact
+    )
+  )
+  tibble::tibble(
+    n.genes = nrow(paired_df),
+    statistic = unname(wt$statistic),
+    p.value = wt$p.value,
+    log2.fc = unname(wt$estimate),  # Hodges-Lehmann median paired log2 fold change
+    conf.low = wt$conf.int[1],
+    conf.high = wt$conf.int[2],
+    wt.mean = mean(paired_df$cpm.ref),
+    mut.mean = mean(paired_df$cpm.test)
+  )
+}

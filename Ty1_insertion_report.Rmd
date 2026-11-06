@@ -467,82 +467,63 @@ cowplot::plot_grid(dist_plot.a, dist_plot.b,
                    rel_widths = c(1, 3))
 ```
 
-TODO: group p-values as less than 0.001
+Upstream coverage per tRNA gene is a count that is strongly over-dispersed (variance roughly 20-30 times the mean), right-skewed, and contains a few zeros (about 1-3% of genes in galactose libraries, 10-15% in dextrose libraries) in excess of what a negative binomial distribution predicts. The same tRNA genes are measured in every library and their coverage is highly correlated between libraries (r = 0.7-0.98), so the comparison was paired by gene. Counts were converted to log2 counts-per-million with a pseudocount of 0.5, which keeps zeros finite and turns each paired difference into a log2 fold change. Differences remain heavy-tailed on this scale, so a paired Wilcoxon signed-rank test was used rather than a t-test. Genes with no coverage in either library were excluded. Each library is a single replicate, so the tRNA genes are the unit of replication and the tests describe consistency across genes within a library. Benjamini-Hochberg correction was applied across all comparisons.
 
-```{r mutant-vs-wt-t-test, tab.cap="Result of a Welch's two-sided t-test under the null hypothesis that there is no difference in Ty1 insertion between mutant and wild-type strains at regions upstream of tRNA genes."}
-
-bt.cov_t_test_res_table <- bt.cov_df %>%
+```{r mutant-vs-wt-t-test, tab.cap="Paired Wilcoxon signed-rank tests of Ty1 insertion upstream of tRNA genes in each library versus the galactose wild-type library of the same subunit. Counts were converted to log2 counts-per-million (pseudocount 0.5) and paired by tRNA gene; the log2 fold change is the Hodges-Lehmann estimate of the median paired difference. Adjusted p-values (Benjamini-Hochberg) correct for all comparisons in the table. Means are in counts per million."}
+# Raw upstream counts per tRNA gene (both strands) with the library sizes used
+# to normalise coverage elsewhere in the report.
+bt.paired_count_df <- bt.cov_df %>%
   filter(
-    sugar == "Galactose",
     subunit != "Other",
     proximity == "upstream"
   ) %>%
-  group_by(strain.type, trna.name, library, sugar, subunit, group) %>%
-  summarise(
-    coverage.sum = sum(coverage.norm),
-    .groups = "keep"
-  ) %>%
-  dplyr::group_by(subunit) %>%
-  tidyr::nest() %>%
-  dplyr::mutate(
-    ttest = purrr::map(data,
-                       subunit_wise_t_test_helper,
-                       paired = FALSE,
-                       conf.level = 0.99,
-                       alternative = "two.sided",
-                       values_col = "coverage.sum")
-  ) %>%
-  tidyr::unnest(ttest) %>%
-  dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean", "mut.mean"))) %>%
-  dplyr::mutate(sugar = "Galactose")
+  group_by(library, subunit, sugar, strain.type, group, trna.name) %>%
+  summarise(coverage.count = sum(coverage), .groups = "drop") %>%
+  left_join(
+    read_counts_df %>%
+      filter(norm_type == "raw_f1") %>%
+      distinct(library, seq_library_size),
+    by = "library"
+  )
 
-bt.sugar_cov_t_test_res_table <- bt.cov_df %>%
-  # mutate(
-  #   group = ifelse(sugar == "Dextrose" & group == "WT",
-  #                  "WT-Dex",
-  #                  group)
-  # ) |> 
-  filter(
-    # Keep libraries fed with dextrose
-    # sugar == "Galactose",
-    subunit != "Other",
-    proximity == "upstream"
-  ) %>%
-  group_by(strain.type, trna.name, library, sugar, subunit, group) %>%
-  summarise(
-    coverage.sum = sum(coverage.norm),
-    .groups = "keep"
-  ) %>%
-  dplyr::group_by(subunit) %>%
-  tidyr::nest() %>%
-  dplyr::mutate(
-    ttest = purrr::map(data,
-                       sugar_wise_t_test_helper,
-                       paired = FALSE,
-                       conf.level = 0.99,
-                       alternative = "two.sided",
-                       values_col = "coverage.sum")
-  ) %>%
-  tidyr::unnest(ttest) %>%
-  dplyr::select(all_of(c("subunit", "group", "statistic", "p.value", "wt.mean" = "wt.galactose.mean", "mut.mean" = "dextrose.mean"))) %>%
-  dplyr::mutate(sugar = "Dextrose")
+stopifnot(!anyNA(bt.paired_count_df$seq_library_size))
 
-bt.combined_cov_t_test_res_kable <- dplyr::bind_rows(
-  bt.cov_t_test_res_table,
-  bt.sugar_cov_t_test_res_table
-) |> 
+bt.wt_gal_libs <- bt.paired_count_df %>%
+  filter(strain.type == "Wild-type", sugar == "Galactose") %>%
+  distinct(subunit, ref_library = library)
+
+# Every other library is compared against the galactose wild-type library of its subunit.
+bt.cov_wilcox_res_table <- bt.paired_count_df %>%
+  distinct(subunit, group, sugar, library) %>%
+  inner_join(bt.wt_gal_libs, by = "subunit") %>%
+  filter(library != ref_library) %>%
+  mutate(
+    test_res = purrr::map2(
+      ref_library, library,
+      \(ref, test) paired_log_cpm_wilcoxon(
+        df = bt.paired_count_df,
+        ref_library = ref,
+        test_library = test
+      )
+    )
+  ) %>%
+  tidyr::unnest(test_res) %>%
+  mutate(p.adjusted = p.adjust(p.value, method = "BH"))
+
+bt.combined_cov_t_test_res_kable <- bt.cov_wilcox_res_table |>
+  arrange(pick(c("subunit", "group", "sugar"))) |>
   dplyr::mutate(
-    statistic = round(statistic, 2)
-  ) |> 
-  arrange(pick(c("subunit", "group", "sugar", "statistic"))) |>
-  dplyr::relocate(sugar, .after = group) |> 
+    across(c(p.value, p.adjusted),
+           \(x) ifelse(x < 0.001, "<0.001", as.character(signif(x, 2)))),
+    across(c(log2.fc, conf.low, conf.high), \(x) round(x, 2)),
+    across(c(wt.mean, mut.mean), \(x) round(x, 1))
+  ) |>
+  dplyr::select(subunit, group, sugar, n.genes, statistic, log2.fc, conf.low,
+                conf.high, p.value, p.adjusted, wt.mean, mut.mean) |>
   knitr::kable(
-    # format = "latex",
-    digits = Inf, 
-    # escape = TRUE,
-    # booktabs = TRUE,
-    # longtable = FALSE,
-    col.names = c("Subunit", "Library", "Sugar", "T-test statistic", "p-value", "WT mean", "Mutant mean")
+    col.names = c("Subunit", "Library", "Sugar", "Genes", "V statistic", "log2 FC",
+                  "99% CI low", "99% CI high", "p-value", "Adjusted p-value",
+                  "WT mean", "Mutant mean")
   )  |>
   kableExtra::kable_minimal() # |>
   # kableExtra::kable_styling(
@@ -1569,87 +1550,134 @@ plot_trna_heatmaps_by_subunit <- function(trna_cov_df, meta_df) {
   }
 }
 
-# Run t-tests on tRNA coverage comparing mutant vs wild-type
+# Paired Wilcoxon signed-rank tests on tRNA coverage comparing each mutant library to the
+# wild-type library of the same subunit. Gene copies of a tRNA type are paired between
+# libraries, tested on log2 counts-per-million, and p-values are BH-adjusted across all
+# tRNA types and mutants in the call.
 run_trna_coverage_t_tests <- function(named_cov_df, feature_filter, libs_for_filtering,
-                                      conf.level = 0.95, output_file = NULL) {
+                                      alpha = 0.05, min_pairs = 6, output_file = NULL) {
+  # The smallest two-sided exact signed-rank p-value is 2 / 2^n, so at least six
+  # informative pairs are needed to be able to reach p < 0.05.
+  proximity_filter <- c(
+    "tRNA" = "gene",
+    "tRNA upstream" = "upstream",
+    "tRNA downstream" = "downstream"
+  )[[feature_filter]]
+
+  # Zero-coverage regions were added by complete() with NA read counts and no feature name,
+  # so select on proximity (not feature.name) to keep them as true zeros.
   tmp_trna_cov_df <- named_cov_df %>%
-    filter(
-      feature.name == feature_filter,
+    dplyr::filter(
+      proximity == proximity_filter,
       !library %in% libs_for_filtering,
       sugar == "Galactose",
-      subunit != "Other"
+      subunit != "Other",
+      !is.na(trna.name)
     ) %>%
     dplyr::mutate(
-      coverage.sum = coverage.pbp.norm
-    ) %>%
-    dplyr::group_by(subunit, strain.type, group, trna.name) %>%
-    dplyr::mutate(trna_obs = n()) %>%
-    dplyr::filter(
-      !is.na(trna.name),
-      trna_obs > 3
-    ) %>%
-    dplyr::select(all_of(c(
-      "subunit",
-      "sugar",
-      "strain.type",
-      "group",
-      "trna.type" = "trna.name",
-      "coverage.sum"
-    )))
-
-  trna_cov_stats_df <- tmp_trna_cov_df %>%
-    group_by(subunit, group, trna.type) %>%
-    dplyr::reframe(
-      mean = mean(coverage.sum),
-      var = var(coverage.sum)
+      coverage.count = dplyr::coalesce(coverage, 0),
+      copy.id = paste(chr, start, end, strand, sep = ":")
     )
 
-  trna_t_test_res_df <- tmp_trna_cov_df %>%
-    dplyr::group_by(subunit, trna.type) %>%
-    tidyr::nest() %>%
-    dplyr::mutate(
-      ttest = purrr::map(data,
-                         subunit_wise_t_test_helper,
-                         paired = FALSE,
-                         conf.level = conf.level,
-                         alternative = "two.sided",
-                         values_col = "coverage.sum")
+  stopifnot(!anyDuplicated(tmp_trna_cov_df[c("library", "copy.id")]))
+
+  # Recover each library's size from the normalisation applied upstream:
+  # coverage.pbp.norm = coverage / feature.length / (library size / 1e6)
+  lib_size_df <- tmp_trna_cov_df %>%
+    dplyr::filter(coverage.count > 0) %>%
+    dplyr::group_by(library) %>%
+    dplyr::summarise(
+      seq_library_size = median(coverage.count / (coverage.pbp.norm * feature.length) * 1e6),
+      .groups = "drop"
+    )
+  tmp_trna_cov_df <- dplyr::left_join(tmp_trna_cov_df, lib_size_df, by = "library")
+  stopifnot(!anyNA(tmp_trna_cov_df$seq_library_size))
+
+  trna_df_by_type <- split(tmp_trna_cov_df, tmp_trna_cov_df$trna.name)
+
+  comparison_df <- tmp_trna_cov_df %>%
+    dplyr::filter(strain.type == "Mutant") %>%
+    dplyr::distinct(subunit, group, library) %>%
+    dplyr::inner_join(
+      tmp_trna_cov_df %>%
+        dplyr::filter(strain.type == "Wild-type") %>%
+        dplyr::distinct(subunit, ref_library = library),
+      by = "subunit"
     ) %>%
-    tidyr::unnest(ttest) %>%
-    dplyr::select(all_of(c("subunit", "trna.type", "group", "p.value", "wt.mean"))) %>% 
-    left_join(trna_cov_stats_df,
-              by = c("subunit", "trna.type", "group"))
+    tidyr::crossing(trna.type = names(trna_df_by_type))
+
+  trna_t_test_res_df <- comparison_df %>%
+    dplyr::mutate(
+      test_res = purrr::pmap(
+        list(ref_library, library, trna.type),
+        \(ref, test, type) paired_log_cpm_wilcoxon(
+          df = trna_df_by_type[[type]],
+          ref_library = ref,
+          test_library = test,
+          count_col = "coverage.count",
+          id_col = "copy.id",
+          conf.level = 1 - alpha,
+          exact = NULL
+        )
+      )
+    ) %>%
+    tidyr::unnest(test_res)
+
+  untestable <- trna_t_test_res_df %>%
+    dplyr::filter(n.genes < min_pairs | is.na(p.value)) %>%
+    dplyr::distinct(trna.type) %>%
+    dplyr::pull(trna.type)
+  if (length(untestable) > 0) {
+    message("tRNA types with fewer than ", min_pairs,
+            " informative gene copies in at least one comparison: ",
+            paste(untestable, collapse = ", "))
+  }
+
+  trna_t_test_res_df <- trna_t_test_res_df %>%
+    dplyr::filter(n.genes >= min_pairs, !is.na(p.value)) %>%
+    dplyr::mutate(p.adjusted = p.adjust(p.value, method = "BH"))
 
   sig_trna_types <- trna_t_test_res_df %>%
-    dplyr::filter(p.value < 0.05) %>%
+    dplyr::filter(p.adjusted < alpha) %>%
     dplyr::pull(trna.type) %>%
     unique()
 
   trna_t_test_res_df <- trna_t_test_res_df %>%
-    dplyr::filter(trna.type %in% sig_trna_types)
+    dplyr::filter(trna.type %in% sig_trna_types) %>%
+    dplyr::arrange(subunit, trna.type, group) %>%
+    dplyr::select(subunit, trna.type, group, n.genes, log2.fc, conf.low, conf.high,
+                  p.value, p.adjusted, wt.mean, mut.mean)
 
-  bold_rows <- which(trna_t_test_res_df$p.value < 0.05)
+  bold_rows <- which(trna_t_test_res_df$p.adjusted < alpha)
 
-  trna_t_test_res_df %>%
-    knitr::kable() |> 
-    kableExtra::kable_minimal() |> 
-    kableExtra::row_spec(bold_rows, bold = TRUE) |> 
-    as.character() |> 
+  format_table <- function(df) {
+    df %>%
+      dplyr::mutate(
+        dplyr::across(c(p.value, p.adjusted),
+                      \(x) ifelse(x < 0.001, "<0.001", as.character(signif(x, 2)))),
+        dplyr::across(c(log2.fc, conf.low, conf.high), \(x) round(x, 2)),
+        dplyr::across(c(wt.mean, mut.mean), \(x) round(x, 2))
+      ) %>%
+      knitr::kable(
+        col.names = c("Subunit", "tRNA", "Library", "Gene copies", "log2 FC",
+                      paste0(100 * (1 - alpha), "% CI low"), paste0(100 * (1 - alpha), "% CI high"),
+                      "p-value", "Adjusted p-value", "WT mean CPM", "Mutant mean CPM")
+      ) %>%
+      kableExtra::row_spec(bold_rows, bold = TRUE) %>%
+      kableExtra::kable_minimal()
+  }
+
+  format_table(trna_t_test_res_df) |>
+    as.character() |>
     cat()
 
   if (!render_pdf && !is.null(output_file)) {
     kableExtra::save_kable(
-      x = trna_t_test_res_df %>%
-        knitr::kable(
-          digits = Inf,
-          col.names = c("Subunit", "tRNA", "Library", "p-value", "WT mean", "Mutant mean", "Mutant variance")
-        ) %>% 
-        kableExtra::row_spec(bold_rows, bold = TRUE) %>% 
-        kableExtra::kable_minimal(),
+      x = format_table(trna_t_test_res_df),
       file = output_file
     )
   }
-  
+
   invisible(trna_t_test_res_df)
 }
 ```
@@ -1771,23 +1799,23 @@ outlier_trna_type_list <- c("tE", "tW", "tH", "tC", "tN")
 
 #### T-tests (non-unique)
 
-```{r trna-coverage-t-test-gene, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type. All tRNAs were tested (not just those observed to be outliers from the scatterplot figure). Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
+```{r trna-coverage-t-test-gene, results='asis', tab.cap=paste("Paired Wilcoxon signed-rank test results comparing tRNA coverage (within the gene) between each mutant library and the wild-type library of the same subunit. Gene copies of each tRNA type were paired between libraries and tested on log2 counts-per-million (pseudocount 0.5); log2 FC is the Hodges-Lehmann median paired difference. Adjusted p-values are Benjamini-Hochberg corrected across all tRNA types and mutants tested; types with fewer than six informative gene copies were not tested. All tRNAs were tested (not just those observed to be outliers from the scatterplot figure). Only tRNAs with at least one adjusted p-value below 0.05 are shown, and significant rows are in bold. Each library is a single replicate, so gene copies are the unit of replication.")}
 run_trna_coverage_t_tests(
   trna_named_cov_df,
   feature_filter = "tRNA",
   libs_for_filtering = p.libs_for_filtering,
-  conf.level = 0.95,
+  alpha = 0.05,
   output_file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
 )
 ```
 
 
-```{r trna-coverage-t-test-upstream, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing upstream tRNA coverage between mutants and wild-type. Only the tRNAs with at least one statistically significant difference were included in the table - all others were excluded.")}
+```{r trna-coverage-t-test-upstream, results='asis', tab.cap=paste("Paired Wilcoxon signed-rank test results comparing upstream tRNA coverage between each mutant library and the wild-type library of the same subunit. Gene copies of each tRNA type were paired between libraries and tested on log2 counts-per-million (pseudocount 0.5); log2 FC is the Hodges-Lehmann median paired difference. Adjusted p-values are Benjamini-Hochberg corrected across all tRNA types and mutants tested; types with fewer than six informative gene copies were not tested. Only tRNAs with at least one adjusted p-value below 0.05 are shown, and significant rows are in bold. Each library is a single replicate, so gene copies are the unit of replication.")}
 run_trna_coverage_t_tests(
   trna_named_cov_df,
   feature_filter = "tRNA upstream",
   libs_for_filtering = p.libs_for_filtering,
-  conf.level = 0.99,
+  alpha = 0.05,
   output_file = file.path(params$output_dir, "t-test_tRNA_upstream_coverage_table.pdf")
 )
 ```
@@ -1978,22 +2006,22 @@ trna_named_uniq_cov_df <- hm.full_uniq_cov_df %>%
 
 #### T-tests (unique)
 
-```{r trna-unique-coverage-t-test-gene, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing tRNA coverage (within the gene) between mutants and wild-type, using uniquely-mapped reads only.")}
+```{r trna-unique-coverage-t-test-gene, results='asis', tab.cap=paste("Paired Wilcoxon signed-rank test results comparing tRNA coverage (within the gene) between each mutant library and the wild-type library of the same subunit, using uniquely-mapped reads only. Gene copies with no unique coverage in either library (e.g., unmappable identical copies) were excluded from each pair. See the non-unique table for the test description; adjusted p-values are Benjamini-Hochberg corrected.")}
 run_trna_coverage_t_tests(
   trna_named_uniq_cov_df,
   feature_filter = "tRNA",
   libs_for_filtering = p.libs_for_filtering,
-  conf.level = 0.95,
+  alpha = 0.05,
   output_file = file.path(params$output_dir, "t-test_tRNA_gene_unique_coverage_table.pdf")
 )
 ```
 
-```{r trna-unique-coverage-t-test-upstream, results='asis', tab.cap=paste("Welch's two-sample t-test results comparing upstream tRNA coverage between mutants and wild-type, using uniquely-mapped reads only.")}
+```{r trna-unique-coverage-t-test-upstream, results='asis', tab.cap=paste("Paired Wilcoxon signed-rank test results comparing upstream tRNA coverage between each mutant library and the wild-type library of the same subunit, using uniquely-mapped reads only. Gene copies with no unique coverage in either library (e.g., unmappable identical copies) were excluded from each pair. See the non-unique table for the test description; adjusted p-values are Benjamini-Hochberg corrected.")}
 run_trna_coverage_t_tests(
   trna_named_uniq_cov_df,
   feature_filter = "tRNA upstream",
   libs_for_filtering = p.libs_for_filtering,
-  conf.level = 0.99,
+  alpha = 0.05,
   output_file = file.path(params$output_dir, "t-test_tRNA_upstream_unique_coverage_table.pdf")
 )
 ```
