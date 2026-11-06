@@ -536,7 +536,7 @@ bt.combined_cov_t_test_res_kable
 if (!render_pdf) {
   kableExtra::save_kable(
     bt.combined_cov_t_test_res_kable,
-    file = file.path(params$output_dir, "t-test_tRNA_coverage_table.pdf")
+    file = file.path(params$output_dir, "test_tRNA_coverage_table.pdf")
   )
 }
 
@@ -1805,7 +1805,7 @@ run_trna_coverage_t_tests(
   feature_filter = "tRNA",
   libs_for_filtering = p.libs_for_filtering,
   alpha = 0.05,
-  output_file = file.path(params$output_dir, "t-test_tRNA_gene_coverage_table.pdf")
+  output_file = file.path(params$output_dir, "test_tRNA_gene_coverage_table.pdf")
 )
 ```
 
@@ -1816,7 +1816,7 @@ run_trna_coverage_t_tests(
   feature_filter = "tRNA upstream",
   libs_for_filtering = p.libs_for_filtering,
   alpha = 0.05,
-  output_file = file.path(params$output_dir, "t-test_tRNA_upstream_coverage_table.pdf")
+  output_file = file.path(params$output_dir, "test_tRNA_upstream_coverage_table.pdf")
 )
 ```
 
@@ -2012,7 +2012,7 @@ run_trna_coverage_t_tests(
   feature_filter = "tRNA",
   libs_for_filtering = p.libs_for_filtering,
   alpha = 0.05,
-  output_file = file.path(params$output_dir, "t-test_tRNA_gene_unique_coverage_table.pdf")
+  output_file = file.path(params$output_dir, "test_tRNA_gene_unique_coverage_table.pdf")
 )
 ```
 
@@ -2022,7 +2022,7 @@ run_trna_coverage_t_tests(
   feature_filter = "tRNA upstream",
   libs_for_filtering = p.libs_for_filtering,
   alpha = 0.05,
-  output_file = file.path(params$output_dir, "t-test_tRNA_upstream_unique_coverage_table.pdf")
+  output_file = file.path(params$output_dir, "test_tRNA_upstream_unique_coverage_table.pdf")
 )
 ```
 
