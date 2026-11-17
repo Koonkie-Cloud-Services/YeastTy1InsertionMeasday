@@ -533,6 +533,16 @@ bt.combined_cov_t_test_res_kable <- bt.cov_wilcox_res_table |>
   # )
 
 bt.combined_cov_t_test_res_kable
+writexl::write_xlsx(
+  x = bt.cov_wilcox_res_table |>
+    dplyr::arrange(pick(c("subunit", "group", "sugar"))) |>
+    dplyr::select(subunit, group, sugar, n.genes, statistic, log2.fc, conf.low,
+                  conf.high, p.value, p.adjusted, wt.mean, mut.mean) |>
+    setNames(c("Subunit", "Library", "Sugar", "Genes", "V statistic", "log2 FC",
+               "99% CI low", "99% CI high", "p-value", "Adjusted p-value",
+               "WT mean", "Mutant mean")),
+  path = file.path(params$output_dir, "test_tRNA_coverage_table.xlsx")
+)
 if (!render_pdf) {
   kableExtra::save_kable(
     bt.combined_cov_t_test_res_kable,
@@ -1642,6 +1652,9 @@ run_trna_coverage_t_tests <- function(named_cov_df, feature_filter, libs_for_fil
     dplyr::pull(trna.type) %>%
     unique()
 
+  trna_all_tests_df <- trna_t_test_res_df %>%
+    dplyr::arrange(subunit, trna.type, group)
+
   trna_t_test_res_df <- trna_t_test_res_df %>%
     dplyr::filter(trna.type %in% sig_trna_types) %>%
     dplyr::arrange(subunit, trna.type, group) %>%
@@ -1649,6 +1662,12 @@ run_trna_coverage_t_tests <- function(named_cov_df, feature_filter, libs_for_fil
                   p.value, p.adjusted, wt.mean, mut.mean)
 
   bold_rows <- which(trna_t_test_res_df$p.adjusted < alpha)
+
+  table_col_names <- c(
+    "Subunit", "tRNA", "Library", "Gene copies", "log2 FC",
+    paste0(100 * (1 - alpha), "% CI low"), paste0(100 * (1 - alpha), "% CI high"),
+    "p-value", "Adjusted p-value", "WT mean CPM", "Mutant mean CPM"
+  )
 
   format_table <- function(df) {
     df %>%
@@ -1658,11 +1677,7 @@ run_trna_coverage_t_tests <- function(named_cov_df, feature_filter, libs_for_fil
         dplyr::across(c(log2.fc, conf.low, conf.high), \(x) round(x, 2)),
         dplyr::across(c(wt.mean, mut.mean), \(x) round(x, 2))
       ) %>%
-      knitr::kable(
-        col.names = c("Subunit", "tRNA", "Library", "Gene copies", "log2 FC",
-                      paste0(100 * (1 - alpha), "% CI low"), paste0(100 * (1 - alpha), "% CI high"),
-                      "p-value", "Adjusted p-value", "WT mean CPM", "Mutant mean CPM")
-      ) %>%
+      knitr::kable(col.names = table_col_names) %>%
       kableExtra::row_spec(bold_rows, bold = TRUE) %>%
       kableExtra::kable_minimal()
   }
@@ -1670,6 +1685,19 @@ run_trna_coverage_t_tests <- function(named_cov_df, feature_filter, libs_for_fil
   format_table(trna_t_test_res_df) |>
     as.character() |>
     cat()
+
+  if (!is.null(output_file)) {
+    # Unrounded values; the second sheet has every test, not just significant tRNA types.
+    writexl::write_xlsx(
+      x = list(
+        "significant tRNA types" = setNames(trna_t_test_res_df, table_col_names),
+        "all tests" = trna_all_tests_df %>%
+          dplyr::select(dplyr::all_of(names(trna_t_test_res_df))) %>%
+          setNames(table_col_names)
+      ),
+      path = paste0(tools::file_path_sans_ext(output_file), ".xlsx")
+    )
+  }
 
   if (!render_pdf && !is.null(output_file)) {
     kableExtra::save_kable(
@@ -2028,7 +2056,9 @@ run_trna_coverage_t_tests(
 
 # Appendix
 
-## tRNA anti-codon heatmaps
+## tRNA isoacceptor coverage
+
+### Heatmaps
 
 ```{r define-trna-codon-dataframe}
 get_trna_codon_df <- function(coverage_df, meta_df, proximity = "gene") {
@@ -2112,6 +2142,260 @@ plot_trna_heatmaps_by_subunit(
     filter(trna.name != "tX(XXX)"),
   meta_df = trna_codon_meta_df
 )
+```
+
+### Tests
+
+Is Ty1 inserted upstream of non-preferred codons preferentially over preferred codons?
+
+```{r define-isoacceptor-codon-test}
+# One row per tRNA gene copy and library, with log2 coverage (log2.cov) shared by the tests and
+# the plots. Coverage is per kb per million reads (coverage.pbp.norm).
+# `strain_types` and `subunits` restrict the libraries used; NULL keeps all.
+get_isoacceptor_copy_df <- function(coverage_df, libs_for_filtering, proximity = "upstream",
+                                    strain_types = "Wild-type",
+                                    subunits = c("RPC160", "RPC34")) {
+  stopifnot(proximity %in% c("gene", "upstream", "downstream"))
+
+  copy_df <- coverage_df %>%
+    dplyr::filter(
+      grepl(pattern = "tRNA", x = feature.name),
+      !library %in% libs_for_filtering
+    ) %>%
+    dplyr::select(!dplyr::any_of(c("subunit", "sugar", "strain.type", "group"))) |>
+    dplyr::left_join(trna_df %>% dplyr::select(trna.name, chr, end),
+                     by = c("chr", "end")) %>%
+    dplyr::left_join(trna_df %>% dplyr::select(trna.name, chr, start),
+                     by = c("chr", "end" = "start"), suffix = c("", ".up")) %>%
+    dplyr::left_join(trna_df %>% dplyr::select(trna.name, chr, end),
+                     by = c("chr", "start" = "end"), suffix = c("", ".down")) |>
+    dplyr::mutate(
+      trna.name = dplyr::coalesce(trna.name, trna.name.up, trna.name.down),
+      proximity = dplyr::case_when(
+        feature.name == "tRNA" ~ "gene",
+        feature.name == "tRNA upstream" ~ "upstream",
+        feature.name == "tRNA downstream" ~ "downstream",
+        .default = NA
+      )
+    ) |>
+    # Copies with no reads are absent from the coverage data; add them back as zeros
+    tidyr::complete(library,
+                    tidyr::nesting(trna.name, proximity, chr, start, end, strand),
+                    fill = list(coverage.pbp.norm = 0)) |>
+    extract_metadata_from_library_names() |>
+    dplyr::filter(
+      proximity == {{proximity}},
+      sugar == "Galactose",
+      subunit != "Other",
+      !is.na(trna.name),
+      is.null(strain_types) | strain.type %in% strain_types,
+      is.null(subunits) | subunit %in% subunits
+    ) |>
+    dplyr::mutate(trna.name = stringr::str_replace(trna.name, "\\).*$", ")"))
+
+  # Half the smallest non-zero value keeps zeros finite on the log scale
+  pseudocount <- min(copy_df$coverage.pbp.norm[copy_df$coverage.pbp.norm > 0]) / 2
+
+  dplyr::mutate(copy_df, log2.cov = log2(coverage.pbp.norm + pseudocount))
+}
+
+# Box plots of the per-copy values used by run_isoacceptor_codon_tests (same arguments), with
+# every gene copy drawn so that copies far from the group median are visible. Copies beyond
+# 1.5 x IQR from the box are labelled with their chromosome:start when label_outliers = TRUE.
+# Returns a ggplot faceted by library (rows) and isoacceptor pair (columns).
+plot_isoacceptor_codon_distributions <- function(coverage_df, pairs_df, libs_for_filtering,
+                                                 proximity = "upstream",
+                                                 strain_types = "Wild-type",
+                                                 subunits = c("RPC160", "RPC34"),
+                                                 label_outliers = TRUE) {
+  stopifnot(all(c("preferred", "non_preferred") %in% names(pairs_df)))
+
+  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity,
+                                     strain_types, subunits)
+
+  plot_df <- pairs_df %>%
+    dplyr::mutate(pair = paste0(preferred, " vs ", non_preferred)) %>%
+    tidyr::pivot_longer(c(preferred, non_preferred),
+                        names_to = "codon.class", values_to = "trna.name") %>%
+    dplyr::inner_join(copy_df, by = "trna.name", relationship = "many-to-many") %>%
+    dplyr::mutate(
+      codon.class = factor(codon.class, levels = c("preferred", "non_preferred"),
+                           labels = c("Preferred", "Non-preferred")),
+      copy.label = paste0(chr, ":", start)
+    ) %>%
+    dplyr::group_by(library, pair, trna.name) %>%
+    dplyr::mutate(
+      iqr.bounds = list(stats::quantile(log2.cov, c(0.25, 0.75)) +
+                          c(-1.5, 1.5) * stats::IQR(log2.cov)),
+      is.outlier = log2.cov < iqr.bounds[[1]][1] | log2.cov > iqr.bounds[[1]][2]
+    ) %>%
+    dplyr::ungroup()
+
+  # Show copy number in the axis labels
+  plot_df <- plot_df %>%
+    dplyr::add_count(library, pair, trna.name, name = "n.copies") %>%
+    dplyr::mutate(axis.label = paste0(trna.name, "\n(n = ", n.copies, ")"))
+
+  jit <- position_jitter(width = 0.15, height = 0, seed = 1)
+  p <- ggplot(plot_df, aes(x = axis.label, y = log2.cov, fill = codon.class)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.5, width = 0.6) +
+    geom_point(position = jit, size = 1.5, alpha = 0.8) +
+    facet_grid(library ~ pair, scales = "free_x") +
+    scale_fill_brewer(palette = "Set1", name = "Codon class") +
+    labs(
+      x = NULL,
+      y = paste0("log2 coverage per kb per million reads (", proximity, ")")
+    ) +
+    theme_bw() +
+    theme(strip.text.y = element_text(angle = 0))
+
+  if (label_outliers) {
+    # Same data and jitter seed as the points, so labels sit on the jittered positions
+    p <- p + ggrepel::geom_text_repel(
+      aes(label = ifelse(is.outlier, copy.label, NA)),
+      position = jit, size = 2.5, max.overlaps = Inf, na.rm = TRUE
+    )
+  }
+  p
+}
+
+# Unpaired Wilcoxon rank-sum tests between the gene copies of two isoacceptors, run separately
+# in every library. Each gene copy contributes one value: coverage per kb per million reads
+# (coverage.pbp.norm), log2-transformed. The copy number of each isoacceptor is reported but
+# values are not rescaled by it, so gene copies are the unit of replication.
+# `pairs_df` needs columns `preferred` and `non_preferred` with full anticodon names, e.g.
+# tL(CAA) and tL(UAG). log2.fc is the Hodges-Lehmann shift, non-preferred minus preferred.
+run_isoacceptor_codon_tests <- function(coverage_df, pairs_df, libs_for_filtering,
+                                        proximity = "upstream",
+                                        strain_types = "Wild-type",
+                                        subunits = c("RPC160", "RPC34"),
+                                        alternative = c("greater", "two.sided", "less"),
+                                        alpha = 0.05, min_copies = 2) {
+  alternative <- match.arg(alternative)
+  stopifnot(proximity %in% c("gene", "upstream", "downstream"),
+            all(c("preferred", "non_preferred") %in% names(pairs_df)))
+
+  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity,
+                                     strain_types, subunits)
+
+  copies_by_name <- split(copy_df, copy_df$trna.name)
+  libraries_df <- copy_df %>%
+    dplyr::distinct(library, subunit, strain.type, group)
+
+  res_df <- tidyr::crossing(libraries_df, pairs_df) %>%
+    dplyr::mutate(
+      test_res = purrr::pmap(
+        list(library, preferred, non_preferred),
+        \(lib, pref, nonpref) {
+          get_vals <- \(name) {
+            d <- copies_by_name[[name]]
+            if (is.null(d)) return(numeric(0))
+            d$log2.cov[d$library == lib]
+          }
+          x <- get_vals(nonpref)
+          y <- get_vals(pref)
+          out <- tibble::tibble(
+            n.non_preferred = length(x), n.preferred = length(y),
+            median.non_preferred = stats::median(x), median.preferred = stats::median(y),
+            statistic = NA_real_, p.value = NA_real_,
+            log2.fc = NA_real_, conf.low = NA_real_, conf.high = NA_real_
+          )
+          if (min(length(x), length(y)) < min_copies || length(unique(c(x, y))) < 2)
+            return(out)
+          wt <- suppressWarnings(stats::wilcox.test(
+            x, y, paired = FALSE, alternative = alternative,
+            conf.int = TRUE, conf.level = 1 - alpha, exact = FALSE
+          ))
+          out$statistic <- unname(wt$statistic)
+          out$p.value <- wt$p.value
+          out$log2.fc <- unname(wt$estimate)
+          out$conf.low <- wt$conf.int[1]
+          out$conf.high <- wt$conf.int[2]
+          out
+        }
+      )
+    ) %>%
+    tidyr::unnest(test_res) %>%
+    dplyr::mutate(p.adjusted = p.adjust(p.value, method = "BH")) %>%
+    dplyr::arrange(subunit, preferred, non_preferred, group)
+
+  untested <- dplyr::filter(res_df, is.na(p.value))
+  if (nrow(untested) > 0) {
+    message(nrow(untested), " comparison(s) not tested (fewer than ", min_copies,
+            " gene copies of an isoacceptor, or no variation): ",
+            paste(unique(paste0(untested$preferred, " vs ", untested$non_preferred)),
+                  collapse = ", "))
+  }
+  res_df
+}
+```
+
+```{r run-isoacceptor-codon-upstream-tests, tab.cap="One-sided Wilcoxon rank-sum tests of Ty1 insertion upstream of tRNA genes encoding non-preferred versus preferred isoacceptors, run separately in each galactose wild-type library. Each gene copy contributes one value, log2 coverage per kb per million reads, and gene copies are the unit of replication (values are not rescaled by copy number). The alternative hypothesis is that coverage is greater for the non-preferred isoacceptor; log2.fc is the Hodges-Lehmann median shift (non-preferred minus preferred) with its confidence interval. n.preferred and n.non_preferred are gene copy numbers. Adjusted p-values are Benjamini-Hochberg corrected across all comparisons in the table. Comparisons with fewer than two copies of an isoacceptor were not tested.", fig.cap="Distribution of Ty1 insertion coverage upstream of individual tRNA gene copies for preferred and non-preferred isoacceptor pairs. Each point is one gene copy (log2 coverage per kb per million reads); boxes show the median and interquartile range, with whiskers extending to 1.5 times the interquartile range. Copies beyond the whiskers are labelled with their chromosome and start position. Rows are libraries, columns are isoacceptor pairs, and the number of gene copies (n) is given beneath each isoacceptor name.", fig.height=7, fig.width=10}
+run_isoacceptor_codon_tests(
+  coverage_df = hm.full_cov_df,
+  pairs_df = data.frame(
+    preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
+    non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
+  ),
+  libs_for_filtering = p.libs_for_filtering
+) |> knitr::kable() |> kableExtra::kable_minimal()
+
+plot_isoacceptor_codon_distributions(
+  coverage_df = hm.full_cov_df,
+  pairs_df = data.frame(
+    preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
+    non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
+  ),
+  libs_for_filtering = p.libs_for_filtering
+)
+```
+
+
+```{r run-isoacceptor-codon-gene-tests, tab.cap="One-sided Wilcoxon rank-sum tests of Ty1 insertion within tRNA genes encoding the non-preferred versus the preferred isoacceptor, run separately in each galactose wild-type library. Each gene copy contributes one value, log2 coverage per kb per million reads, and gene copies are the unit of replication (values are not rescaled by copy number). The alternative hypothesis is that coverage is greater for the non-preferred isoacceptor; log2.fc is the Hodges-Lehmann median shift (non-preferred minus preferred) with its confidence interval. n.preferred and n.non_preferred are gene copy numbers. Adjusted p-values are Benjamini-Hochberg corrected across all comparisons in the table.", fig.cap="Distribution of Ty1 insertion coverage within individual tRNA gene copies of the preferred and non-preferred isoacceptors. Each point is one gene copy (log2 coverage per kb per million reads); boxes show the median and interquartile range, with whiskers extending to 1.5 times the interquartile range. Copies beyond the whiskers are labelled with their chromosome and start position. Rows are libraries, and the number of gene copies (n) is given beneath each isoacceptor name.", fig.height=5, fig.width=7}
+run_isoacceptor_codon_tests(
+  coverage_df = hm.full_cov_df,
+  pairs_df = data.frame(
+    preferred = c("tE(UUC)"),
+    non_preferred = c("tE(CUC)")
+  ),
+  libs_for_filtering = p.libs_for_filtering,
+  proximity = "gene"
+) |>
+  knitr::kable() |>
+  kableExtra::kable_minimal()
+
+plot_isoacceptor_codon_distributions(
+  coverage_df = hm.full_cov_df,
+  pairs_df = data.frame(
+    preferred = c("tE(UUC)"),
+    non_preferred = c("tE(CUC)")
+  ),
+  libs_for_filtering = p.libs_for_filtering,
+  proximity = "gene"
+)
+```
+
+```{r tgly-gcc-rpc160-wt-unique-insertions, tab.cap="Number of uniquely-mapped Ty1 insertions upstream of each tG(GCC) gene copy in the galactose RPC160 wild-type library, with coverage normalised per kb per million reads. Gene copies are ordered by insertion count."}
+get_isoacceptor_copy_df(
+  coverage_df = hm.full_uniq_cov_df,
+  libs_for_filtering = p.libs_for_filtering,
+  proximity = "upstream"
+) |>
+  dplyr::filter(
+    trna.name == "tG(GCC)",
+    subunit == "RPC160"
+  ) |>
+  dplyr::mutate(
+    trna.iso.name = dplyr::coalesce(trna.name.up, trna.name.down)
+  ) |> 
+  dplyr::transmute(
+    library, trna.iso.name, chr, start, end, strand,
+    insertions = dplyr::coalesce(coverage, 0),
+    coverage.pbp.norm = signif(coverage.pbp.norm, 3)
+  ) |>
+  dplyr::arrange(library, dplyr::desc(insertions)) |>
+  knitr::kable() |>
+  kableExtra::kable_minimal()
 ```
 
 ## Ty1 insertion quantification at tRNA genes
