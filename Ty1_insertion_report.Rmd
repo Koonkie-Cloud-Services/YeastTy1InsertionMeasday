@@ -2149,12 +2149,16 @@ plot_trna_heatmaps_by_subunit(
 Is Ty1 inserted upstream of non-preferred codons preferentially over preferred codons?
 
 ```{r define-isoacceptor-codon-test}
-# One row per tRNA gene copy and library, with log2 coverage (log2.cov) shared by the tests and
-# the plots. Coverage is per kb per million reads (coverage.pbp.norm).
+# One row per tRNA gene copy and library, with log2 coverage (log2.cov) shared by the tests, the
+# plots and the power analysis. Coverage is per kb per million reads (coverage.pbp.norm).
 # `strain_types` and `subunits` restrict the libraries used; NULL keeps all.
+# `level` sets the testing unit (column `unit`): each "library" separately, or all libraries of
+# a "subunit" together. copy.id identifies a gene copy across libraries.
 get_isoacceptor_copy_df <- function(coverage_df, libs_for_filtering, proximity = "upstream",
-                                    strain_types = "Wild-type",
+                                    level = c("library", "subunit"),
+                                    strain_types = if (level == "library") "Wild-type",
                                     subunits = c("RPC160", "RPC34")) {
+  level <- match.arg(level)
   stopifnot(proximity %in% c("gene", "upstream", "downstream"))
 
   copy_df <- coverage_df %>%
@@ -2191,7 +2195,11 @@ get_isoacceptor_copy_df <- function(coverage_df, libs_for_filtering, proximity =
       is.null(strain_types) | strain.type %in% strain_types,
       is.null(subunits) | subunit %in% subunits
     ) |>
-    dplyr::mutate(trna.name = stringr::str_replace(trna.name, "\\).*$", ")"))
+    dplyr::mutate(
+      trna.name = stringr::str_replace(trna.name, "\\).*$", ")"),
+      copy.id = paste(chr, start, end, strand, sep = ":"),
+      unit = if (level == "library") library else as.character(subunit)
+    )
 
   # Half the smallest non-zero value keeps zeros finite on the log scale
   pseudocount <- min(copy_df$coverage.pbp.norm[copy_df$coverage.pbp.norm > 0]) / 2
@@ -2199,18 +2207,82 @@ get_isoacceptor_copy_df <- function(coverage_df, libs_for_filtering, proximity =
   dplyr::mutate(copy_df, log2.cov = log2(coverage.pbp.norm + pseudocount))
 }
 
+# Rows describing each testing unit: library level keeps library/strain.type/group.
+get_isoacceptor_units_df <- function(copy_df, level) {
+  if (level == "library") {
+    dplyr::distinct(copy_df, unit, library, subunit, strain.type, group)
+  } else {
+    copy_df %>%
+      dplyr::group_by(unit, subunit) %>%
+      dplyr::summarise(n.libraries = dplyr::n_distinct(library), .groups = "drop")
+  }
+}
+
+# Long data for one pair: rows of both isoacceptors with a codon.class factor.
+get_isoacceptor_pair_df <- function(copy_df, pref, nonpref) {
+  copy_df %>%
+    dplyr::filter(trna.name %in% c(pref, nonpref)) %>%
+    dplyr::mutate(codon.class = factor(
+      ifelse(trna.name == pref, "preferred", "non_preferred"),
+      levels = c("preferred", "non_preferred")
+    ))
+}
+
+# Mixed model log2.cov ~ codon.class + library + (1 | copy.id) for one unit and pair. The random
+# intercept accounts for the same gene copy being measured in several libraries; the library term
+# absorbs library-wide shifts. codon.class varies between copies, so its df are copy-level
+# (Satterthwaite). p-value and interval follow `alternative`. icc is the share of variance
+# between gene copies.
+fit_isoacceptor_mixed <- function(pair_df, alternative = "greater", alpha = 0.05) {
+  empty <- tibble::tibble(
+    statistic = NA_real_, df = NA_real_,
+    p.value = NA_real_, log2.fc = NA_real_, conf.low = NA_real_, conf.high = NA_real_,
+    icc = NA_real_, singular = NA
+  )
+  if (dplyr::n_distinct(pair_df$codon.class) < 2) return(empty)
+  use_library <- dplyr::n_distinct(pair_df$library) > 1
+  form <- if (use_library) log2.cov ~ codon.class + library + (1 | copy.id) else
+    log2.cov ~ codon.class + (1 | copy.id)
+  fit <- tryCatch(
+    suppressMessages(suppressWarnings(lmerTest::lmer(form, data = pair_df))),
+    error = function(e) NULL
+  )
+  if (is.null(fit)) return(empty)
+  co <- summary(fit)$coefficients["codon.classnon_preferred", ]
+  est <- unname(co["Estimate"]); se <- unname(co["Std. Error"])
+  df <- unname(co["df"]); t <- unname(co["t value"])
+  vc <- as.data.frame(lme4::VarCorr(fit))
+  tibble::tibble(
+    statistic = t, df = df,
+    p.value = switch(alternative,
+      greater = stats::pt(t, df, lower.tail = FALSE),
+      less = stats::pt(t, df),
+      two.sided = 2 * stats::pt(-abs(t), df)),
+    log2.fc = est,
+    conf.low = if (alternative == "less") -Inf else
+      est - stats::qt(1 - alpha / ifelse(alternative == "two.sided", 2, 1), df) * se,
+    conf.high = if (alternative == "greater") Inf else
+      est + stats::qt(1 - alpha / ifelse(alternative == "two.sided", 2, 1), df) * se,
+    icc = vc$vcov[vc$grp == "copy.id"] / sum(vc$vcov),
+    singular = lme4::isSingular(fit)
+  )
+}
+
 # Box plots of the per-copy values used by run_isoacceptor_codon_tests (same arguments), with
 # every gene copy drawn so that copies far from the group median are visible. Copies beyond
 # 1.5 x IQR from the box are labelled with their chromosome:start when label_outliers = TRUE.
-# Returns a ggplot faceted by library (rows) and isoacceptor pair (columns).
+# Returns a ggplot faceted by testing unit (rows) and isoacceptor pair (columns). At the
+# subunit level each library contributes one point per gene copy, coloured/shaped by library.
 plot_isoacceptor_codon_distributions <- function(coverage_df, pairs_df, libs_for_filtering,
                                                  proximity = "upstream",
-                                                 strain_types = "Wild-type",
+                                                 level = c("library", "subunit"),
+                                                 strain_types = if (level == "library") "Wild-type",
                                                  subunits = c("RPC160", "RPC34"),
                                                  label_outliers = TRUE) {
+  level <- match.arg(level)
   stopifnot(all(c("preferred", "non_preferred") %in% names(pairs_df)))
 
-  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity,
+  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity, level,
                                      strain_types, subunits)
 
   plot_df <- pairs_df %>%
@@ -2223,24 +2295,29 @@ plot_isoacceptor_codon_distributions <- function(coverage_df, pairs_df, libs_for
                            labels = c("Preferred", "Non-preferred")),
       copy.label = paste0(chr, ":", start)
     ) %>%
-    dplyr::group_by(library, pair, trna.name) %>%
+    dplyr::group_by(unit, pair, trna.name) %>%
     dplyr::mutate(
+      n.copies = dplyr::n_distinct(copy.id),
       iqr.bounds = list(stats::quantile(log2.cov, c(0.25, 0.75)) +
                           c(-1.5, 1.5) * stats::IQR(log2.cov)),
       is.outlier = log2.cov < iqr.bounds[[1]][1] | log2.cov > iqr.bounds[[1]][2]
     ) %>%
-    dplyr::ungroup()
-
-  # Show copy number in the axis labels
-  plot_df <- plot_df %>%
-    dplyr::add_count(library, pair, trna.name, name = "n.copies") %>%
+    dplyr::ungroup() %>%
+    # Show copy number in the axis labels
     dplyr::mutate(axis.label = paste0(trna.name, "\n(n = ", n.copies, ")"))
 
   jit <- position_jitter(width = 0.15, height = 0, seed = 1)
-  p <- ggplot(plot_df, aes(x = axis.label, y = log2.cov, fill = codon.class)) +
-    geom_boxplot(outlier.shape = NA, alpha = 0.5, width = 0.6) +
-    geom_point(position = jit, size = 1.5, alpha = 0.8) +
-    facet_grid(library ~ pair, scales = "free_x") +
+  p <- ggplot(plot_df, aes(x = axis.label, y = log2.cov, fill = codon.class))
+  p <- p + geom_boxplot(outlier.shape = NA, alpha = 0.5, width = 0.6)
+  p <- if (level == "subunit") {
+    p + geom_point(aes(colour = library, shape = library), position = jit, size = 1.8,
+                   alpha = 0.8) +
+      scale_colour_viridis_d(end = 0.9)
+  } else {
+    p + geom_point(position = jit, size = 1.5, alpha = 0.8)
+  }
+  p <- p +
+    facet_grid(unit ~ pair, scales = "free_x") +
     scale_fill_brewer(palette = "Set1", name = "Codon class") +
     labs(
       x = NULL,
@@ -2259,80 +2336,207 @@ plot_isoacceptor_codon_distributions <- function(coverage_df, pairs_df, libs_for
   p
 }
 
-# Unpaired Wilcoxon rank-sum tests between the gene copies of two isoacceptors, run separately
-# in every library. Each gene copy contributes one value: coverage per kb per million reads
-# (coverage.pbp.norm), log2-transformed. The copy number of each isoacceptor is reported but
-# values are not rescaled by it, so gene copies are the unit of replication.
-# `pairs_df` needs columns `preferred` and `non_preferred` with full anticodon names, e.g.
-# tL(CAA) and tL(UAG). log2.fc is the Hodges-Lehmann shift, non-preferred minus preferred.
+# Tests between the gene copies of two isoacceptors for every testing unit.
+# level = "library": unpaired Wilcoxon rank-sum test within each library (method "wilcoxon").
+# level = "subunit": all libraries of a subunit are used together via a linear mixed model with
+# a random intercept per gene copy and a fixed library effect (method "mixed"), so repeated
+# measurements of a copy are not treated as independent replicates. A Wilcoxon test cannot do
+# this, so it is only available at library level, and the mixed model needs level = "subunit".
+# Each gene copy contributes log2 coverage per kb per million reads (coverage.pbp.norm); values
+# are not rescaled by copy number. `pairs_df` needs columns `preferred` and `non_preferred`
+# with full anticodon names, e.g. tL(CAA) and tL(UAG). log2.fc is the Hodges-Lehmann shift
+# (wilcoxon) or model estimate (mixed), non-preferred minus preferred.
 run_isoacceptor_codon_tests <- function(coverage_df, pairs_df, libs_for_filtering,
                                         proximity = "upstream",
-                                        strain_types = "Wild-type",
+                                        level = c("library", "subunit"),
+                                        strain_types = if (level == "library") "Wild-type",
                                         subunits = c("RPC160", "RPC34"),
+                                        method = if (level == "library") "wilcoxon" else "mixed",
                                         alternative = c("greater", "two.sided", "less"),
                                         alpha = 0.05, min_copies = 2) {
+  level <- match.arg(level)
   alternative <- match.arg(alternative)
-  stopifnot(proximity %in% c("gene", "upstream", "downstream"),
-            all(c("preferred", "non_preferred") %in% names(pairs_df)))
+  method <- match.arg(method, c("wilcoxon", "mixed"))
+  stopifnot(all(c("preferred", "non_preferred") %in% names(pairs_df)),
+            (level == "library") == (method == "wilcoxon"))
 
-  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity,
+  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity, level,
                                      strain_types, subunits)
-
   copies_by_name <- split(copy_df, copy_df$trna.name)
-  libraries_df <- copy_df %>%
-    dplyr::distinct(library, subunit, strain.type, group)
 
-  res_df <- tidyr::crossing(libraries_df, pairs_df) %>%
-    dplyr::mutate(
-      test_res = purrr::pmap(
-        list(library, preferred, non_preferred),
-        \(lib, pref, nonpref) {
-          get_vals <- \(name) {
-            d <- copies_by_name[[name]]
-            if (is.null(d)) return(numeric(0))
-            d$log2.cov[d$library == lib]
-          }
-          x <- get_vals(nonpref)
-          y <- get_vals(pref)
-          out <- tibble::tibble(
-            n.non_preferred = length(x), n.preferred = length(y),
-            median.non_preferred = stats::median(x), median.preferred = stats::median(y),
-            statistic = NA_real_, p.value = NA_real_,
-            log2.fc = NA_real_, conf.low = NA_real_, conf.high = NA_real_
-          )
-          if (min(length(x), length(y)) < min_copies || length(unique(c(x, y))) < 2)
-            return(out)
-          wt <- suppressWarnings(stats::wilcox.test(
-            x, y, paired = FALSE, alternative = alternative,
-            conf.int = TRUE, conf.level = 1 - alpha, exact = FALSE
-          ))
-          out$statistic <- unname(wt$statistic)
-          out$p.value <- wt$p.value
-          out$log2.fc <- unname(wt$estimate)
-          out$conf.low <- wt$conf.int[1]
-          out$conf.high <- wt$conf.int[2]
-          out
-        }
-      )
-    ) %>%
-    tidyr::unnest(test_res) %>%
+  test_one <- function(u, pref, nonpref) {
+    get_df <- \(name) {
+      d <- copies_by_name[[name]]
+      if (is.null(d)) d else d[d$unit == u, ]
+    }
+    x_df <- get_df(nonpref)
+    y_df <- get_df(pref)
+    n_x <- dplyr::n_distinct(x_df$copy.id)
+    n_y <- dplyr::n_distinct(y_df$copy.id)
+    counts <- tibble::tibble(n.non_preferred = n_x, n.preferred = n_y)
+    too_few <- min(n_x, n_y) < min_copies
+    if (method == "mixed") {
+      res <- if (too_few) fit_isoacceptor_mixed(get_isoacceptor_pair_df(copy_df[0, ], pref, nonpref))
+        else fit_isoacceptor_mixed(
+          get_isoacceptor_pair_df(dplyr::bind_rows(x_df, y_df), pref, nonpref),
+          alternative, alpha
+        )
+      return(dplyr::bind_cols(counts, res))
+    }
+    x <- x_df$log2.cov
+    y <- y_df$log2.cov
+    out <- dplyr::bind_cols(counts, tibble::tibble(
+      median.non_preferred = stats::median(x), median.preferred = stats::median(y),
+      statistic = NA_real_, p.value = NA_real_,
+      log2.fc = NA_real_, conf.low = NA_real_, conf.high = NA_real_
+    ))
+    if (too_few || length(unique(c(x, y))) < 2) return(out)
+    wt <- suppressWarnings(stats::wilcox.test(
+      x, y, paired = FALSE, alternative = alternative,
+      conf.int = TRUE, conf.level = 1 - alpha, exact = FALSE
+    ))
+    out$statistic <- unname(wt$statistic)
+    out$p.value <- wt$p.value
+    out$log2.fc <- unname(wt$estimate)
+    out$conf.low <- wt$conf.int[1]
+    out$conf.high <- wt$conf.int[2]
+    out
+  }
+
+  res_df <- tidyr::crossing(get_isoacceptor_units_df(copy_df, level), pairs_df) %>%
+    dplyr::mutate(test_res = purrr::pmap(list(unit, preferred, non_preferred), test_one)) %>%
+    tidyr::unnest(test_res, names_repair = "unique_quiet") %>%
+    dplyr::select(-unit) %>%
     dplyr::mutate(p.adjusted = p.adjust(p.value, method = "BH")) %>%
-    dplyr::arrange(subunit, preferred, non_preferred, group)
+    dplyr::arrange(dplyr::across(dplyr::any_of(c("subunit", "preferred", "non_preferred",
+                                                 "group"))))
 
   untested <- dplyr::filter(res_df, is.na(p.value))
   if (nrow(untested) > 0) {
     message(nrow(untested), " comparison(s) not tested (fewer than ", min_copies,
-            " gene copies of an isoacceptor, or no variation): ",
+            " gene copies of an isoacceptor, no variation, or failed fit): ",
             paste(unique(paste0(untested$preferred, " vs ", untested$non_preferred)),
                   collapse = ", "))
   }
   res_df
 }
+
+# Power of run_isoacceptor_codon_tests for the observed gene copy numbers (same arguments).
+# For each testing unit and pair it reports simulated power for log2 shifts in `effects`.
+# level = "library" (wilcoxon): normal values with the observed pooled within-group SD, plus the
+# smallest attainable p-value (complete separation, same asymptotic test) and whether it can fall
+# below alpha, or below alpha / n_tests (the cut-off the best p-value must meet to survive BH
+# adjustment across all comparisons).
+# level = "subunit" (mixed): the observed design (copies x libraries) is kept and the response is
+# simulated from the fitted copy and residual variances plus the shift, then refitted.
+# Both models are approximate; real data are heavier tailed. Mixed-model power is slow, so use
+# a smaller n_sim.
+power_isoacceptor_codon_tests <- function(coverage_df, pairs_df, libs_for_filtering,
+                                          proximity = "upstream",
+                                          level = c("library", "subunit"),
+                                          strain_types = if (level == "library") "Wild-type",
+                                          subunits = c("RPC160", "RPC34"),
+                                          alternative = c("greater", "two.sided", "less"),
+                                          alpha = 0.05, effects = c(0.5, 1, 2),
+                                          n_sim = if (level == "library") 2000 else 200,
+                                          seed = 1) {
+  level <- match.arg(level)
+  alternative <- match.arg(alternative)
+  copy_df <- get_isoacceptor_copy_df(coverage_df, libs_for_filtering, proximity, level,
+                                     strain_types, subunits)
+  units_df <- get_isoacceptor_units_df(copy_df, level)
+  n_tests <- nrow(units_df) * nrow(pairs_df)
+
+  min_p <- function(n1, n2) {
+    if (min(n1, n2) < 1) return(NA_real_)
+    suppressWarnings(stats::wilcox.test(
+      seq_len(n1) + n2, seq_len(n2), alternative = alternative, exact = FALSE
+    )$p.value)
+  }
+  sim_wilcox <- function(n1, n2, sd, delta) {
+    if (min(n1, n2) < 2 || is.na(sd) || sd == 0) return(NA_real_)
+    mean(replicate(n_sim, {
+      stats::wilcox.test(stats::rnorm(n1, delta, sd), stats::rnorm(n2, 0, sd),
+                         alternative = alternative, exact = FALSE)$p.value < alpha
+    }))
+  }
+  sim_mixed <- function(pair_df, delta) {
+    base <- fit_isoacceptor_mixed(pair_df, alternative, alpha)
+    if (is.na(base$p.value)) return(NA_real_)
+    use_library <- dplyr::n_distinct(pair_df$library) > 1
+    fit <- suppressMessages(suppressWarnings(lmerTest::lmer(
+      if (use_library) log2.cov ~ codon.class + library + (1 | copy.id) else
+        log2.cov ~ codon.class + (1 | copy.id),
+      data = pair_df
+    )))
+    vc <- as.data.frame(lme4::VarCorr(fit))
+    sd_copy <- sqrt(vc$vcov[vc$grp == "copy.id"])
+    sd_res <- sqrt(vc$vcov[vc$grp == "Residual"])
+    copies <- unique(pair_df$copy.id)
+    mean(replicate(n_sim, {
+      u <- stats::setNames(stats::rnorm(length(copies), 0, sd_copy), copies)
+      sim_df <- pair_df
+      sim_df$log2.cov <- delta * (sim_df$codon.class == "non_preferred") +
+        u[sim_df$copy.id] + stats::rnorm(nrow(sim_df), 0, sd_res)
+      isTRUE(fit_isoacceptor_mixed(sim_df, alternative, alpha)$p.value < alpha)
+    }))
+  }
+
+  set.seed(seed)
+  rows <- tidyr::crossing(units_df, pairs_df)
+  res <- purrr::pmap(
+    list(rows$unit, rows$preferred, rows$non_preferred),
+    \(u, pref, nonpref) {
+      pair_df <- get_isoacceptor_pair_df(
+        dplyr::filter(copy_df, unit == u), pref, nonpref
+      )
+      x <- pair_df$log2.cov[pair_df$codon.class == "non_preferred"]
+      y <- pair_df$log2.cov[pair_df$codon.class == "preferred"]
+      counts <- tibble::tibble(
+        n.non_preferred = dplyr::n_distinct(pair_df$copy.id[pair_df$codon.class == "non_preferred"]),
+        n.preferred = dplyr::n_distinct(pair_df$copy.id[pair_df$codon.class == "preferred"])
+      )
+      if (level == "subunit") {
+        pw <- purrr::map_dbl(effects, \(d) if (min(counts) < 2) NA_real_ else sim_mixed(pair_df, d))
+        return(dplyr::bind_cols(counts, tibble::as_tibble(
+          stats::setNames(as.list(pw), paste0("power.log2fc_", effects))
+        )))
+      }
+      sd <- if (min(length(x), length(y)) >= 2)
+        sqrt((sum((x - mean(x))^2) + sum((y - mean(y))^2)) / (length(x) + length(y) - 2))
+        else NA_real_
+      mp <- min_p(length(x), length(y))
+      pw <- purrr::map_dbl(effects, \(d) sim_wilcox(length(x), length(y), sd, d))
+      dplyr::bind_cols(counts, tibble::tibble(
+        pooled.sd = sd, min.p = mp, possible.at.alpha = mp < alpha,
+        possible.after.BH = mp < alpha / n_tests
+      ), tibble::as_tibble(stats::setNames(as.list(pw), paste0("power.log2fc_", effects))))
+    }
+  )
+  dplyr::bind_cols(rows, dplyr::bind_rows(res)) %>%
+    dplyr::select(-unit) %>%
+    dplyr::arrange(dplyr::across(dplyr::any_of(c("subunit", "preferred", "non_preferred",
+                                                 "group"))))
+}
+```
+
+```{r isoacceptor-codon-upstream-power}
+power_isoacceptor_codon_tests(
+  coverage_df = hm.full_cov_df,
+  pairs_df = data.frame(
+    preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
+    non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
+  ),
+  libs_for_filtering = p.libs_for_filtering
+) |> knitr::kable(digits = 3) |> kableExtra::kable_minimal()
 ```
 
 ```{r run-isoacceptor-codon-upstream-tests, tab.cap="One-sided Wilcoxon rank-sum tests of Ty1 insertion upstream of tRNA genes encoding non-preferred versus preferred isoacceptors, run separately in each galactose wild-type library. Each gene copy contributes one value, log2 coverage per kb per million reads, and gene copies are the unit of replication (values are not rescaled by copy number). The alternative hypothesis is that coverage is greater for the non-preferred isoacceptor; log2.fc is the Hodges-Lehmann median shift (non-preferred minus preferred) with its confidence interval. n.preferred and n.non_preferred are gene copy numbers. Adjusted p-values are Benjamini-Hochberg corrected across all comparisons in the table. Comparisons with fewer than two copies of an isoacceptor were not tested.", fig.cap="Distribution of Ty1 insertion coverage upstream of individual tRNA gene copies for preferred and non-preferred isoacceptor pairs. Each point is one gene copy (log2 coverage per kb per million reads); boxes show the median and interquartile range, with whiskers extending to 1.5 times the interquartile range. Copies beyond the whiskers are labelled with their chromosome and start position. Rows are libraries, columns are isoacceptor pairs, and the number of gene copies (n) is given beneath each isoacceptor name.", fig.height=7, fig.width=10}
 run_isoacceptor_codon_tests(
   coverage_df = hm.full_cov_df,
+  level = "library",
+  strain_types = "Mutant",
+  subunits = "RPC160",
   pairs_df = data.frame(
     preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
     non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
@@ -2342,6 +2546,9 @@ run_isoacceptor_codon_tests(
 
 plot_isoacceptor_codon_distributions(
   coverage_df = hm.full_cov_df,
+  level = "library",
+  strain_types = "Mutant",
+  subunits = "RPC160",
   pairs_df = data.frame(
     preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
     non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
@@ -2373,6 +2580,68 @@ plot_isoacceptor_codon_distributions(
   libs_for_filtering = p.libs_for_filtering,
   proximity = "gene"
 )
+```
+
+```{r te-cuc-rpc160-mutant-vs-wt-gene, tab.cap="Ty1 insertions within each tE(CUC) gene copy in each galactose RPC160 mutant library compared with the RPC160 wild-type library (all mapped reads). Insertions are raw read counts; coverage is per kb per million reads. log2 FC is the per-copy difference in log2 coverage (mutant minus wild-type). There are only two tE(CUC) gene copies, so no paired test can reach significance (the smallest possible exact two-sided Wilcoxon signed-rank p-value with two pairs is 0.5) and the per-copy values are reported descriptively."}
+te_cuc_df <- get_isoacceptor_copy_df(
+  coverage_df = hm.full_cov_df,
+  libs_for_filtering = p.libs_for_filtering,
+  proximity = "gene",
+  strain_types = NULL,
+  subunits = "RPC160"
+) |>
+  dplyr::filter(trna.name == "tE(CUC)") |>
+  dplyr::mutate(insertions = dplyr::coalesce(coverage, 0))
+
+te_cuc_wt_df <- te_cuc_df |>
+  dplyr::filter(strain.type == "Wild-type") |>
+  dplyr::select(copy.id, wt.library = library, wt.insertions = insertions,
+                wt.coverage = coverage.pbp.norm, wt.log2.cov = log2.cov)
+
+te_cuc_df |>
+  dplyr::filter(strain.type == "Mutant") |>
+  dplyr::inner_join(te_cuc_wt_df, by = "copy.id") |>
+  dplyr::transmute(
+    library, copy.id, wt.library,
+    wt.insertions, mut.insertions = insertions,
+    wt.coverage = signif(wt.coverage, 3),
+    mut.coverage = signif(coverage.pbp.norm, 3),
+    log2.fc = round(log2.cov - wt.log2.cov, 2)
+  ) |>
+  dplyr::arrange(library, copy.id) |>
+  knitr::kable() |>
+  kableExtra::kable_minimal()
+```
+
+```{r te-uuc-rpc160-mutant-vs-wt-gene, tab.cap="Ty1 insertions within each tE(UUC) gene copy in each galactose RPC160 mutant library compared with the RPC160 wild-type library (all mapped reads). Insertions are raw read counts; coverage is per kb per million reads. log2 FC is the per-copy difference in log2 coverage (mutant minus wild-type). There are only two tE(UUC) gene copies, so no paired test can reach significance (the smallest possible exact two-sided Wilcoxon signed-rank p-value with two pairs is 0.5) and the per-copy values are reported descriptively."}
+te_uuc_df <- get_isoacceptor_copy_df(
+  coverage_df = hm.full_cov_df,
+  libs_for_filtering = p.libs_for_filtering,
+  proximity = "gene",
+  strain_types = NULL,
+  subunits = "RPC160"
+) |>
+  dplyr::filter(trna.name == "tE(UUC)") |>
+  dplyr::mutate(insertions = dplyr::coalesce(coverage, 0))
+
+te_uuc_wt_df <- te_uuc_df |>
+  dplyr::filter(strain.type == "Wild-type") |>
+  dplyr::select(copy.id, wt.library = library, wt.insertions = insertions,
+                wt.coverage = coverage.pbp.norm, wt.log2.cov = log2.cov)
+
+te_uuc_df |>
+  dplyr::filter(strain.type == "Mutant") |>
+  dplyr::inner_join(te_uuc_wt_df, by = "copy.id") |>
+  dplyr::transmute(
+    library, copy.id, wt.library,
+    wt.insertions, mut.insertions = insertions,
+    wt.coverage = signif(wt.coverage, 3),
+    mut.coverage = signif(coverage.pbp.norm, 3),
+    log2.fc = round(log2.cov - wt.log2.cov, 2)
+  ) |>
+  dplyr::arrange(library, copy.id) |>
+  knitr::kable() |>
+  kableExtra::kable_minimal()
 ```
 
 ```{r tgly-gcc-rpc160-wt-unique-insertions, tab.cap="Number of uniquely-mapped Ty1 insertions upstream of each tG(GCC) gene copy in the galactose RPC160 wild-type library, with coverage normalised per kb per million reads. Gene copies are ordered by insertion count."}
