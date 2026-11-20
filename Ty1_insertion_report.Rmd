@@ -2189,7 +2189,7 @@ get_isoacceptor_copy_df <- function(coverage_df, libs_for_filtering, proximity =
     extract_metadata_from_library_names() |>
     dplyr::filter(
       proximity == {{proximity}},
-      sugar == "Galactose",
+      # sugar == "Galactose",
       subunit != "Other",
       !is.na(trna.name),
       is.null(strain_types) | strain.type %in% strain_types,
@@ -2531,7 +2531,7 @@ power_isoacceptor_codon_tests(
 ) |> knitr::kable(digits = 3) |> kableExtra::kable_minimal()
 ```
 
-```{r run-isoacceptor-codon-upstream-tests, tab.cap="One-sided Wilcoxon rank-sum tests of Ty1 insertion upstream of tRNA genes encoding non-preferred versus preferred isoacceptors, run separately in each galactose wild-type library. Each gene copy contributes one value, log2 coverage per kb per million reads, and gene copies are the unit of replication (values are not rescaled by copy number). The alternative hypothesis is that coverage is greater for the non-preferred isoacceptor; log2.fc is the Hodges-Lehmann median shift (non-preferred minus preferred) with its confidence interval. n.preferred and n.non_preferred are gene copy numbers. Adjusted p-values are Benjamini-Hochberg corrected across all comparisons in the table. Comparisons with fewer than two copies of an isoacceptor were not tested.", fig.cap="Distribution of Ty1 insertion coverage upstream of individual tRNA gene copies for preferred and non-preferred isoacceptor pairs. Each point is one gene copy (log2 coverage per kb per million reads); boxes show the median and interquartile range, with whiskers extending to 1.5 times the interquartile range. Copies beyond the whiskers are labelled with their chromosome and start position. Rows are libraries, columns are isoacceptor pairs, and the number of gene copies (n) is given beneath each isoacceptor name.", fig.height=7, fig.width=10}
+```{r run-isoacceptor-codon-upstream-rpc160-tests, tab.cap="One-sided Wilcoxon rank-sum tests of Ty1 insertion upstream of tRNA genes encoding non-preferred versus preferred isoacceptors, run separately in each galactose wild-type library. Each gene copy contributes one value, log2 coverage per kb per million reads, and gene copies are the unit of replication (values are not rescaled by copy number). The alternative hypothesis is that coverage is greater for the non-preferred isoacceptor; log2.fc is the Hodges-Lehmann median shift (non-preferred minus preferred) with its confidence interval. n.preferred and n.non_preferred are gene copy numbers. Adjusted p-values are Benjamini-Hochberg corrected across all comparisons in the table. Comparisons with fewer than two copies of an isoacceptor were not tested.", fig.cap="Distribution of Ty1 insertion coverage upstream of individual tRNA gene copies for preferred and non-preferred isoacceptor pairs. Each point is one gene copy (log2 coverage per kb per million reads); boxes show the median and interquartile range, with whiskers extending to 1.5 times the interquartile range. Copies beyond the whiskers are labelled with their chromosome and start position. Rows are libraries, columns are isoacceptor pairs, and the number of gene copies (n) is given beneath each isoacceptor name.", fig.height=7, fig.width=10}
 run_isoacceptor_codon_tests(
   coverage_df = hm.full_cov_df,
   level = "library",
@@ -2547,8 +2547,23 @@ run_isoacceptor_codon_tests(
 plot_isoacceptor_codon_distributions(
   coverage_df = hm.full_cov_df,
   level = "library",
-  strain_types = "Mutant",
+  strain_types = c("Mutant", "Wild-type"),
   subunits = "RPC160",
+  pairs_df = data.frame(
+    preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
+    non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
+  ),
+  libs_for_filtering = p.libs_for_filtering
+)
+```
+
+
+```{r plot-isoacceptor-codon-upstream-rpc34-boxplots, fig.cap="Distribution of Ty1 insertion coverage upstream of individual tRNA gene copies for preferred and non-preferred isoacceptor pairs. Each point is one gene copy (log2 coverage per kb per million reads); boxes show the median and interquartile range, with whiskers extending to 1.5 times the interquartile range. Copies beyond the whiskers are labelled with their chromosome and start position. Rows are libraries, columns are isoacceptor pairs, and the number of gene copies (n) is given beneath each isoacceptor name.", fig.height=7, fig.width=10}
+plot_isoacceptor_codon_distributions(
+  coverage_df = hm.full_cov_df,
+  level = "library",
+  strain_types = c("Mutant", "Wild-type"),
+  subunits = "RPC34",
   pairs_df = data.frame(
     preferred = c("tL(CAA)", "tG(GCC)", "tK(CUU)"),
     non_preferred = c("tL(UAG)", "tG(UCC)", "tK(UUU)")
@@ -2583,63 +2598,68 @@ plot_isoacceptor_codon_distributions(
 ```
 
 ```{r te-cuc-rpc160-mutant-vs-wt-gene, tab.cap="Ty1 insertions within each tE(CUC) gene copy in each galactose RPC160 mutant library compared with the RPC160 wild-type library (all mapped reads). Insertions are raw read counts; coverage is per kb per million reads. log2 FC is the per-copy difference in log2 coverage (mutant minus wild-type). There are only two tE(CUC) gene copies, so no paired test can reach significance (the smallest possible exact two-sided Wilcoxon signed-rank p-value with two pairs is 0.5) and the per-copy values are reported descriptively."}
-te_cuc_df <- get_isoacceptor_copy_df(
+te_cov_df <- get_isoacceptor_copy_df(
   coverage_df = hm.full_cov_df,
   libs_for_filtering = p.libs_for_filtering,
   proximity = "gene",
   strain_types = NULL,
   subunits = "RPC160"
 ) |>
-  dplyr::filter(trna.name == "tE(CUC)") |>
-  dplyr::mutate(insertions = dplyr::coalesce(coverage, 0))
+  dplyr::filter(trna.name %in% c("tE(CUC)", "tE(UUC)")) |>
+  dplyr::mutate(insertions = dplyr::coalesce(coverage, 0)) |> 
+  dplyr::group_by(library, trna.name, proximity, strain.type, sugar) |> 
+  dplyr::summarise(
+    copy_number = n() / 2,  # Divide by 2 for each strand
+    coverage.pbp.norm = sum(coverage.pbp.norm),
+    insertions = sum(insertions),
+    log2.cov = sum(log2.cov)
+  ) |>
+  ungroup()
 
-te_cuc_wt_df <- te_cuc_df |>
-  dplyr::filter(strain.type == "Wild-type") |>
-  dplyr::select(copy.id, wt.library = library, wt.insertions = insertions,
+te_wt_cov_df <- te_cov_df |>
+  dplyr::filter(
+    strain.type == "Wild-type",
+    sugar == "Galactose"
+  ) |>
+  dplyr::select(trna.name, wt.library = library, wt.insertions = insertions,
                 wt.coverage = coverage.pbp.norm, wt.log2.cov = log2.cov)
 
-te_cuc_df |>
+te_cov_df |>
   dplyr::filter(strain.type == "Mutant") |>
-  dplyr::inner_join(te_cuc_wt_df, by = "copy.id") |>
+  dplyr::inner_join(te_wt_cov_df, by = "trna.name") |> 
   dplyr::transmute(
-    library, copy.id, wt.library,
+    library, trna.name,
     wt.insertions, mut.insertions = insertions,
     wt.coverage = signif(wt.coverage, 3),
     mut.coverage = signif(coverage.pbp.norm, 3),
     log2.fc = round(log2.cov - wt.log2.cov, 2)
   ) |>
-  dplyr::arrange(library, copy.id) |>
   knitr::kable() |>
   kableExtra::kable_minimal()
 ```
 
-```{r te-uuc-rpc160-mutant-vs-wt-gene, tab.cap="Ty1 insertions within each tE(UUC) gene copy in each galactose RPC160 mutant library compared with the RPC160 wild-type library (all mapped reads). Insertions are raw read counts; coverage is per kb per million reads. log2 FC is the per-copy difference in log2 coverage (mutant minus wild-type). There are only two tE(UUC) gene copies, so no paired test can reach significance (the smallest possible exact two-sided Wilcoxon signed-rank p-value with two pairs is 0.5) and the per-copy values are reported descriptively."}
-te_uuc_df <- get_isoacceptor_copy_df(
-  coverage_df = hm.full_cov_df,
-  libs_for_filtering = p.libs_for_filtering,
-  proximity = "gene",
-  strain_types = NULL,
-  subunits = "RPC160"
-) |>
-  dplyr::filter(trna.name == "tE(UUC)") |>
-  dplyr::mutate(insertions = dplyr::coalesce(coverage, 0))
-
-te_uuc_wt_df <- te_uuc_df |>
-  dplyr::filter(strain.type == "Wild-type") |>
-  dplyr::select(copy.id, wt.library = library, wt.insertions = insertions,
-                wt.coverage = coverage.pbp.norm, wt.log2.cov = log2.cov)
-
-te_uuc_df |>
-  dplyr::filter(strain.type == "Mutant") |>
-  dplyr::inner_join(te_uuc_wt_df, by = "copy.id") |>
-  dplyr::transmute(
-    library, copy.id, wt.library,
-    wt.insertions, mut.insertions = insertions,
-    wt.coverage = signif(wt.coverage, 3),
-    mut.coverage = signif(coverage.pbp.norm, 3),
-    log2.fc = round(log2.cov - wt.log2.cov, 2)
+```{r compare-te-within-gene, tab.cap="Within-gene Ty1 coverage of the non-preferred tE(CUC) and preferred tE(UUC) isoacceptors in each galactose RPC160 library. Coverage is per kb per million reads, summed over gene copies and then divided by the isoacceptor's copy number (per-copy coverage). diff is the absolute difference in per-copy coverage (tE(CUC) minus tE(UUC)); total.diff is the same difference for coverage summed across copies without copy-number normalisation."}
+te_cov_df |>
+  dplyr::filter(strain.type == "Mutant") |> 
+  dplyr::mutate(
+    per.copy.cov = coverage.pbp.norm / copy_number,
+    trna.name = ifelse(trna.name == "tE(CUC)", "cuc", "uuc")
   ) |>
-  dplyr::arrange(library, copy.id) |>
+  dplyr::select(library, strain.type, trna.name, copy_number, per.copy.cov,
+                total.cov = coverage.pbp.norm) |>
+  tidyr::pivot_wider(
+    names_from = trna.name,
+    values_from = c(copy_number, per.copy.cov, total.cov)
+  ) |>
+  dplyr::transmute(
+    library,
+    `copies CUC` = copy_number_cuc, `copies UUC` = copy_number_uuc,
+    `per-copy CUC` = signif(per.copy.cov_cuc, 3),
+    `per-copy UUC` = signif(per.copy.cov_uuc, 3),
+    diff = signif(per.copy.cov_cuc - per.copy.cov_uuc, 3),
+    total.diff = signif(total.cov_cuc - total.cov_uuc, 3)
+  ) |>
+  dplyr::arrange(library) |>
   knitr::kable() |>
   kableExtra::kable_minimal()
 ```
